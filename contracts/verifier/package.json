@@ -1,0 +1,23 @@
+{
+  "name": "verifier",
+  "version": "1.0.0",
+  "description": "Hardhat project for deploying UltraVerifier.sol",
+  "main": "index.js",
+  "scripts": {
+    "compile": "hardhat compile",
+    "deploy": "hardhat run scripts/deploy.js",
+    "deploy:all": "hardhat run scripts/deploy-all.js --network sepolia",
+    "deploy:sepolia": "hardhat run scripts/deploy.js --network sepolia",
+    "verify": "hardhat verify --network sepolia"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "@nomicfoundation/hardhat-verify": "^2.1.3",
+    "dotenv": "^17.2.3",
+    "hardhat": "^2.22.10"
+  }
+}
+

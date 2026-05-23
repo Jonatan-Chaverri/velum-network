@@ -1,0 +1,11 @@
+{
+  "network": "sepolia",
+  "deployer": "0xd6F4a2e050155aa02956ddF4218Abf61DB5B84eB",
+  "timestamp": "2025-11-12T14:06:46.339Z",
+  "blockNumber": 214477862,
+  "contracts": {
+    "deposit": "0xA651B86620f0eA97A78dAEB5374cF681dc393f49",
+    "withdraw": "0xc4052adE9BE73375053C0850eD128573635fD58E",
+    "transfer": "0xF830D0b63856AD156271bd5c0fb609C2B09A5e61"
+  }
+}

@@ -1,0 +1,28 @@
+# Development files
+node_modules
+.env
+.env.local
+*.log
+
+# Build artifacts (Vercel builds these)
+dist
+
+# Documentation
+*.md
+!README.md
+
+# Test files
+**/*.test.ts
+**/*.spec.ts
+tests
+
+# IDE files
+.vscode
+.idea
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+

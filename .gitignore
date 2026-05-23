@@ -1,0 +1,85 @@
+# Rust/Cargo
+target/
+Cargo.lock
+**/*.rs.bk
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+pnpm-lock.yaml
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Noir
+wallet_proof/Prover.toml
+wallet_proof/Verifier.toml
+wallet_proof/proofs/
+wallet_proof/target/
+
+# Build outputs
+dist/
+build/
+*.wasm
+!contracts/*/target/wasm32-unknown-unknown/release/*.wasm
+
+# Logs
+*.log
+test-output.log
+
+# Test files (temporary)
+test-*.mjs
+test-*.js
+*-test.mjs
+test-circuit.sh
+compute-pubkey.mjs
+sample-inputs.json
+
+# Documentation (if you don't want to commit)
+# Uncomment these if you want to exclude ALL markdown docs:
+# *.md
+# !README.md
+# Or be selective:
+CLAUDE.md
+**/CLAUDE.md
+ARCHITECTURE_REFACTOR.md
+ARCHITECTURE_EXPLAINED.md
+COMPLETE_WORKFLOW_GUIDE.md
+WALLET_MODEL_REFACTOR.md
+UNDERSTANDING_THE_ARCHITECTURE.md
+HOW_TO_GET_RECIPIENT_PUBKEY.md
+PROOF_GENERATION_GUIDE.md
+SIMPLE_EXPLANATION.md
+MIGRATION_SUMMARY.md
+SECURITY_FIX_SUMMARY.md
+PUBLIC_KEY_REGISTRY_UPDATE.md
+
+# Frontend specific
+frontend/.next/
+frontend/out/
+frontend/.turbo/
+frontend/app/test-proof/
+
+# Backend specific
+backend/dist/
+backend/stylus_artifacts/*.wasm
+
+.pytest_cache/
+
+old-app/
