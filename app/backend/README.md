@@ -1,8 +1,13 @@
-# ZK Wallet Backend API
+# Velum Backend API
 
 ## Overview
 
-The ZK Wallet Backend is a RESTful API service that manages user accounts, transactions, and contract configurations for a zero-knowledge privacy-focused wallet application. It provides endpoints for user registration, transaction tracking, token management, and application configuration.
+The backend currently serves two parallel concerns:
+
+- legacy wallet and transaction endpoints already present in the project
+- new account and authentication data managed through Prisma against Supabase Postgres
+
+The Prisma layer is the foundation for the new application account model and JWT session storage.
 
 ## Role
 
@@ -40,6 +45,12 @@ cp env.example .env
 PORT=3001
 CORS_ORIGIN=http://localhost:3000
 
+DATABASE_URL=postgresql://...
+DIRECT_URL=postgresql://...
+JWT_SECRET=replace-me
+JWT_EXPIRES_IN=15m
+JWT_REFRESH_EXPIRES_IN=30d
+
 RPC_URL=http://localhost:8547
 
 SUPABASE_URL=your_supabase_url
@@ -49,12 +60,22 @@ SUPABASE_DB_PASSWORD=your_db_password
 NETWORK=SEPOLIA
 ```
 
-4. Run database migrations:
+4. Generate Prisma client:
+```bash
+npm run prisma:generate
+```
+
+5. Run Prisma migrations:
+```bash
+npm run prisma:migrate
+```
+
+6. Run any legacy SQL migrations if still needed:
 ```bash
 npm run migrate
 ```
 
-5. Start the development server:
+7. Start the development server:
 ```bash
 npm run dev
 ```
@@ -64,6 +85,62 @@ Or build and start in production:
 npm run build
 npm start
 ```
+
+## Prisma Auth Schema
+
+The backend now includes a Prisma schema in [prisma/schema.prisma](/Users/jonatan/Desktop/velum_network/velum-network/app/backend/prisma/schema.prisma) for:
+
+- `users`
+- `sessions`
+
+### Users
+
+Fields:
+
+- `id` (`uuid`)
+- `name`
+- `last_name`
+- `organization`
+- `email`
+- `password`
+- `created_at`
+- `updated_at`
+
+### Sessions
+
+JWT-oriented session storage includes:
+
+- `id`
+- `user_id`
+- `refresh_token_hash`
+- `access_token_jti`
+- `expires_at`
+- `last_used_at`
+- `revoked_at`
+- `ip_address`
+- `user_agent`
+- `created_at`
+- `updated_at`
+
+This keeps JWT auth compatible with:
+
+- refresh-token rotation
+- per-device session tracking
+- manual session revocation
+- audit-friendly access metadata
+
+## Prisma Utilities
+
+Prisma client setup lives in [src/lib/prisma.ts](/Users/jonatan/Desktop/velum_network/velum-network/app/backend/src/lib/prisma.ts).
+
+A small auth repository scaffold lives in [src/auth/repositories/authRepository.ts](/Users/jonatan/Desktop/velum_network/velum-network/app/backend/src/auth/repositories/authRepository.ts) for:
+
+- creating users
+- finding users by email
+- creating sessions
+- looking up sessions by access token JTI
+- revoking sessions
+- touching session activity
 
 ## API Endpoints
 
@@ -401,4 +478,3 @@ src/
 The backend is configured for Vercel serverless deployment. The app exports the Express instance for use with Vercel's serverless functions.
 
 For more information about database setup and migrations, see `src/db/README.md`.
-
