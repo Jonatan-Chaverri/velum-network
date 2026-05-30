@@ -12,7 +12,7 @@ export type AgentService = {
 
 export type Agent = {
   id: string;
-  chainAgentId: string;
+  agentId: string;
   title: string;
   description: string;
   category: string;

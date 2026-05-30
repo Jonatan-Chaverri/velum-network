@@ -15,7 +15,6 @@ type CreateAgentBody = {
   category?: string;
   sellsServices?: boolean;
   publicKey?: string;
-  privateKey?: string;
   service?: {
     price?: string;
     priceModel?: 'per response' | 'subscription';
@@ -53,7 +52,7 @@ function isValidUrl(value: string) {
 
 function formatAgentResponse(agent: {
   id: string;
-  chainAgentId: bigint;
+  agentId: bigint;
   title: string;
   description: string;
   category: string;
@@ -76,7 +75,7 @@ function formatAgentResponse(agent: {
 
   return {
     id: agent.id,
-    chainAgentId: agent.chainAgentId.toString(),
+    agentId: agent.agentId.toString(),
     title: agent.title,
     description: agent.description,
     category: agent.category,
@@ -149,7 +148,7 @@ router.get('/', async (req, res, next) => {
       },
       select: {
         id: true,
-        chainAgentId: true,
+        agentId: true,
         title: true,
         description: true,
         category: true,
@@ -203,7 +202,7 @@ router.get('/:id', async (req, res, next) => {
       },
       select: {
         id: true,
-        chainAgentId: true,
+        agentId: true,
         title: true,
         description: true,
         category: true,
@@ -251,7 +250,7 @@ router.post('/', async (req, res, next) => {
       return;
     }
 
-    const { name, description, category, sellsServices, publicKey, privateKey, service }: CreateAgentBody = req.body;
+    const { name, description, category, sellsServices, publicKey, service }: CreateAgentBody = req.body;
 
     if (!name?.trim() || !description?.trim() || !category?.trim()) {
       return res.status(400).json({
@@ -259,9 +258,9 @@ router.post('/', async (req, res, next) => {
       });
     }
 
-    if (!publicKey?.trim() || !privateKey?.trim()) {
+    if (!publicKey?.trim()) {
       return res.status(400).json({
-        error: 'publicKey and privateKey are required',
+        error: 'publicKey is required',
       });
     }
 
@@ -317,7 +316,6 @@ router.post('/', async (req, res, next) => {
           description: description.trim(),
           category: category.trim(),
           publicKey: publicKey.trim(),
-          privateKey: privateKey.trim(),
         },
       });
 
@@ -355,7 +353,7 @@ router.post('/', async (req, res, next) => {
     try {
       await registerAgentPublicKeyOnChain({
         publicKey: createdAgent.agent.publicKey,
-        chainAgentId: createdAgent.agent.chainAgentId,
+        agentId: createdAgent.agent.agentId,
       });
     } catch (registrationError) {
       await prisma.agent.delete({

@@ -113,6 +113,8 @@ export function CreateAgentForm() {
   const [requestError, setRequestError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [success, setSuccess] = useState<string | null>(null);
+  const [generatedPrivateKey, setGeneratedPrivateKey] = useState<string | null>(null);
+  const [privateKeyCopied, setPrivateKeyCopied] = useState(false);
 
   const billingUnit = form.priceModel === "per response" ? "response" : "month";
 
@@ -193,7 +195,6 @@ export function CreateAgentForm() {
           category: form.category,
           sellsServices: form.sellsServices,
           publicKey: serializePublicKey(keyPair.publicKey),
-          privateKey: keyPair.privateKey,
           service: form.sellsServices
             ? {
                 price: form.price.trim(),
@@ -213,7 +214,9 @@ export function CreateAgentForm() {
         throw new Error(data.error || "Could not create agent workspace.");
       }
 
-      router.push("/dashboard/agents");
+      // Show the private key to the user once. The backend never stores it.
+      setGeneratedPrivateKey(keyPair.privateKey);
+      setPrivateKeyCopied(false);
     } catch (submissionError) {
       setRequestError(
         submissionError instanceof Error
@@ -224,6 +227,67 @@ export function CreateAgentForm() {
     } finally {
       setIsSubmitting(false);
     }
+  }
+
+  if (generatedPrivateKey) {
+    return (
+      <Card className="rounded-[1.75rem] border-amber-400/40 bg-amber-500/5">
+        <CardHeader>
+          <CardTitle className="text-amber-200">Save your agent private key</CardTitle>
+        </CardHeader>
+        <CardContent className="grid gap-5">
+          <p className="text-sm text-amber-100/90">
+            This private key is shown <strong>only once</strong> and is never stored by
+            Velum. Copy it now and keep it somewhere safe — you will not be able to
+            recover it later. Anyone with this key controls the agent&apos;s confidential
+            balances.
+          </p>
+
+          <div className="grid gap-2">
+            <Label htmlFor="generated-private-key">Private key</Label>
+            <Textarea
+              id="generated-private-key"
+              value={generatedPrivateKey}
+              readOnly
+              onFocus={(event) => event.currentTarget.select()}
+              className="font-mono text-xs"
+            />
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3">
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={async () => {
+                try {
+                  await navigator.clipboard.writeText(generatedPrivateKey);
+                  setPrivateKeyCopied(true);
+                } catch {
+                  setPrivateKeyCopied(false);
+                }
+              }}
+            >
+              {privateKeyCopied ? (
+                <span className="flex items-center gap-2">
+                  <CheckCircle2 className="h-4 w-4" /> Copied
+                </span>
+              ) : (
+                "Copy to clipboard"
+              )}
+            </Button>
+            <Button
+              type="button"
+              onClick={() => {
+                setGeneratedPrivateKey(null);
+                router.push("/dashboard/agents");
+              }}
+            >
+              I have saved my private key
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    );
   }
 
   return (

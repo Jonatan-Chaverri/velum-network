@@ -24,7 +24,7 @@ router.get('/', async (req, res, next) => {
         agent: {
           select: {
             id: true,
-            chainAgentId: true,
+            agentId: true,
             title: true,
             description: true,
             category: true,
@@ -48,7 +48,7 @@ router.get('/', async (req, res, next) => {
     const agents = services.map((service) => {
       return {
         id: service.agent.id,
-        chainAgentId: service.agent.chainAgentId.toString(),
+        agentId: service.agent.agentId.toString(),
         title: service.agent.title,
         description: service.agent.description,
         category: service.agent.category,

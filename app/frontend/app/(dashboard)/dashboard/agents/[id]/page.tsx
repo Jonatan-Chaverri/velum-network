@@ -147,7 +147,7 @@ export default function AgentDetailsPage() {
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
-            <DetailItem label="On-chain agent id" value={agent.chainAgentId} />
+            <DetailItem label="On-chain agent id" value={agent.agentId} />
             <DetailItem label="Category" value={agent.category} />
             <DetailItem label="Public key" value={agent.publicKey} mono />
           </CardContent>

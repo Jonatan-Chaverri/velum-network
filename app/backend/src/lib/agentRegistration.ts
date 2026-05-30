@@ -4,7 +4,7 @@ const { createWalletClient, http, parseAbi } = require('viem');
 const { privateKeyToAccount } = require('viem/accounts');
 
 const confidentialErc20Abi = parseAbi([
-  'function register_agent_pk(uint8[64] public_key, uint64 agent_id)',
+  'function register_agent_pk(uint8[64] public_key, uint32 agent_id)',
 ]);
 
 function publicKeyHexToBytes(publicKey: string) {
@@ -25,7 +25,7 @@ function publicKeyHexToBytes(publicKey: string) {
 
 export async function registerAgentPublicKeyOnChain(params: {
   publicKey: string;
-  chainAgentId: bigint;
+  agentId: bigint;
 }) {
   const rpcUrl = process.env.RPC_URL;
   const network = process.env.NETWORK;
@@ -59,7 +59,7 @@ export async function registerAgentPublicKeyOnChain(params: {
     address: contract.address,
     abi: confidentialErc20Abi,
     functionName: 'register_agent_pk',
-    args: [publicKeyHexToBytes(params.publicKey), params.chainAgentId],
+    args: [publicKeyHexToBytes(params.publicKey), params.agentId],
   });
 
   return txHash;
