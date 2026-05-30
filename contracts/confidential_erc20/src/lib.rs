@@ -160,6 +160,7 @@ sol! {
     event VerifierUpdated(address deposit_verifier, address withdraw_verifier, address transfer_verifier);
     event TokenAllowlistUpdated(address indexed token, bool allowed);
     event AgentPkRegistered(uint32 indexed agent_id, address indexed controller, bytes pk);
+    event OwnershipTransferred(address indexed previous_owner, address indexed new_owner);
 
     // Standard ERC-20
     function transfer(address to, uint256 amount) external returns (bool);
@@ -320,11 +321,11 @@ impl ConfidentialERC20 {
             return Err(err);
         }
 
-        // Only the registered controller of the sender agent may submit.
-        let caller = self.vm().msg_sender();
-        if self.agent_controllers.get(U32::from(transfer_proof_inputs.sender_agent_id)) != caller {
+        // Confidential transfers are submitted by the contract owner (the app backend)
+        // on behalf of agents, so user intervention is not required per transfer.
+        if self.vm().msg_sender() != self.owner.get() {
             self._release_reentrancy();
-            return Err("Not authorized for sender agent".into());
+            return Err("Only owner can submit transfers".into());
         }
 
         let token = transfer_proof_inputs.token;
@@ -373,6 +374,20 @@ impl ConfidentialERC20 {
 
     pub fn get_owner(&self) -> Address {
         self.owner.get()
+    }
+
+    /// Transfer ownership of the contract to a new address. Only callable by the current owner.
+    /// The new owner becomes the only account allowed to submit `transfer_confidential` and
+    /// to call admin functions like `set_verifier`.
+    pub fn transfer_ownership(&mut self, new_owner: Address) -> Result<(), Vec<u8>> {
+        self._only_owner()?;
+        if new_owner == Address::ZERO {
+            return Err("Zero address".into());
+        }
+        let previous_owner = self.owner.get();
+        self.owner.set(new_owner);
+        evm::log(OwnershipTransferred { previous_owner, new_owner });
+        Ok(())
     }
 
     pub fn is_supported_token(&self, token: Address) -> bool {
