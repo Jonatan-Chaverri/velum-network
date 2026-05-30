@@ -1,0 +1,3 @@
+[submodule "noir-v1-elgamal"]
+	path = noir-v1-elgamal
+	url = https://github.com/shramee/noir-v1-elgamal.git
