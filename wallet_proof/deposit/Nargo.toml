@@ -4,4 +4,4 @@ type = "bin"
 authors = ["Gerson"]
 
 [dependencies]
-elgamal = { path = "../../noir-v1-elgamal/noir/lib" }
+elgamal = { git = "https://github.com/shramee/noir-v1-elgamal", directory = "noir/lib" }

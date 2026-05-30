@@ -27,70 +27,72 @@ fn subtract_ciphertexts(a: CipherText, b: CipherText) -> CipherText {
 }
 
 // ==================== WITHDRAW CIRCUIT ====================
-// Allows users to withdraw tokens from their confidential balance
+// Allows an agent controller to withdraw tokens from that agent's confidential balance
 //
 // PUBLIC INPUTS/OUTPUTS BYTE LAYOUT (matching Rust contract):
-// [0..64]:     sender_pubkey (x: 32, y: 32)
-// [64..192]:   old_balance_ct (x1.x: 32, x1.y: 32, x2.x: 32, x2.y: 32)
-// [192..320]:  new_balance_ct (x1.x: 32, x1.y: 32, x2.x: 32, x2.y: 32) - OUTPUT
-// [320..352]:  sender_address (32)
-// [352..384]:  token (32)
-// [384..416]:  revealed_amount (32) - OUTPUT
+// [0..64]:     agent_pubkey (x: 32, y: 32)
+// [64..192]:   current_balance_ct (x1.x: 32, x1.y: 32, x2.x: 32, x2.y: 32)
+// [192..224]:  token (32)
+// [224..256]:  amount (32)
+// [256..384]:  new_balance_ct (x1.x: 32, x1.y: 32, x2.x: 32, x2.y: 32) - OUTPUT
+// [384..416]:  agent_id (32) - OUTPUT
 // Total: 416 bytes
 
 fn main(
     // Private inputs (secrets not revealed in proof)
-    sender_priv_key: Field,
+    agent_priv_key: Field,
     r_amount: Field,                // Randomness for encrypting amount
+    agent_id: Field,
 
     // Public inputs (visible in proof) - ORDER MATTERS for contract!
-    sender_pubkey: pub Point,
-    old_balance_x1: pub Point,
-    old_balance_x2: pub Point,
-    sender_address: pub Field,
+    agent_pubkey: pub Point,
+    current_balance_x1: pub Point,
+    current_balance_x2: pub Point,
     token: pub Field,
     amount: pub Field               // Amount to withdraw (plaintext, so contract can transfer)
-) -> pub (Point, Point) {  // Returns new_balance ciphertext (2 Points: x1 and x2)
+) -> pub (Point, Point, Field) {  // Returns new_balance ciphertext and agent_id
     // Reconstruct EmbeddedCurvePoint and CipherText from Point structs
-    let sender_pubkey_ec = EmbeddedCurvePoint {
-        x: sender_pubkey.x,
-        y: sender_pubkey.y,
+    let agent_pubkey_ec = EmbeddedCurvePoint {
+        x: agent_pubkey.x,
+        y: agent_pubkey.y,
         is_infinite: false
     };
 
-    let old_balance_ct: CipherText = (
-        EmbeddedCurvePoint { x: old_balance_x1.x, y: old_balance_x1.y, is_infinite: false },
-        EmbeddedCurvePoint { x: old_balance_x2.x, y: old_balance_x2.y, is_infinite: false }
+    let current_balance_ct: CipherText = (
+        EmbeddedCurvePoint { x: current_balance_x1.x, y: current_balance_x1.y, is_infinite: false },
+        EmbeddedCurvePoint { x: current_balance_x2.x, y: current_balance_x2.y, is_infinite: false }
     );
 
     // Enforce range constraints
     amount.assert_max_bit_size::<40>();
+    agent_id.assert_max_bit_size::<32>();
 
-    // Verify sender's public key matches their private key
-    let computed_sender_pubkey = public_key(sender_priv_key);
-    assert(computed_sender_pubkey == sender_pubkey_ec);
+    // Verify the agent's public key matches their private key
+    let computed_agent_pubkey = public_key(agent_priv_key);
+    assert(computed_agent_pubkey == agent_pubkey_ec);
 
-    // Encrypt the withdrawal amount under user's public key
-    let amount_ct = encrypt(sender_pubkey_ec, amount, r_amount);
+    // Encrypt the withdrawal amount under the agent's public key
+    let amount_ct = encrypt(agent_pubkey_ec, amount, r_amount);
 
-    // HOMOMORPHIC SUBTRACTION: new_balance = old_balance - amount
+    // HOMOMORPHIC SUBTRACTION: new_balance = current_balance - amount
     // This works entirely with encrypted values!
-    let new_balance_ct = subtract_ciphertexts(old_balance_ct, amount_ct);
+    let new_balance_ct = subtract_ciphertexts(current_balance_ct, amount_ct);
 
     // Return the new encrypted balance as 2 Points (x1 and x2)
     let new_balance_x1 = Point { x: new_balance_ct.0.x, y: new_balance_ct.0.y };
     let new_balance_x2 = Point { x: new_balance_ct.1.x, y: new_balance_ct.1.y };
 
-    (new_balance_x1, new_balance_x2)
+    (new_balance_x1, new_balance_x2, agent_id)
 }
 
 // ==================== TESTS ====================
 
 #[test]
 fn test_withdraw_basic() {
-    // Setup: User with 1000 tokens wants to withdraw 200
-    let sender_priv_key = 42;
-    let sender_pubkey = public_key(sender_priv_key);
+    // Setup: Agent with 1000 tokens wants to withdraw 200
+    let agent_priv_key = 42;
+    let agent_pubkey = public_key(agent_priv_key);
+    let agent_id = 7;
 
     let current_balance = 1000;
     let amount = 200;
@@ -98,19 +100,19 @@ fn test_withdraw_basic() {
 
     // Encrypt current balance
     let r_old = 111;
-    let old_balance_ct = encrypt(sender_pubkey, current_balance, r_old);
+    let old_balance_ct = encrypt(agent_pubkey, current_balance, r_old);
 
     // Randomness for encrypting amount
     let r_amount = 222;
 
     // Call circuit - it will compute and return the new balance
-    let (returned_new_balance_x1, returned_new_balance_x2) = main(
-        sender_priv_key,
+    let (returned_new_balance_x1, returned_new_balance_x2, returned_agent_id) = main(
+        agent_priv_key,
         r_amount,
-        Point { x: sender_pubkey.x, y: sender_pubkey.y },
+        agent_id,
+        Point { x: agent_pubkey.x, y: agent_pubkey.y },
         Point { x: old_balance_ct.0.x, y: old_balance_ct.0.y },
         Point { x: old_balance_ct.1.x, y: old_balance_ct.1.y },
-        1, // sender address
         3, // token address
         amount
     );
@@ -122,32 +124,34 @@ fn test_withdraw_basic() {
     );
 
     // Verify: returned new balance decrypts correctly
-    let decrypted_new_balance = decrypt(returned_new_balance_ct, sender_priv_key);
+    let decrypted_new_balance = decrypt(returned_new_balance_ct, agent_priv_key);
     verify_embedding(decrypted_new_balance, expected_new_balance);
+    assert(returned_agent_id == agent_id);
 }
 
 #[test]
 fn test_withdraw_all_balance() {
-    // Setup: User withdraws entire balance
-    let sender_priv_key = 42;
-    let sender_pubkey = public_key(sender_priv_key);
+    // Setup: Agent withdraws entire balance
+    let agent_priv_key = 42;
+    let agent_pubkey = public_key(agent_priv_key);
+    let agent_id = 9;
 
     let current_balance = 500;
     let amount = 500;
 
     let r_old = 111;
-    let old_balance_ct = encrypt(sender_pubkey, current_balance, r_old);
+    let old_balance_ct = encrypt(agent_pubkey, current_balance, r_old);
 
     let r_amount = 222;
 
     // Call circuit - it will compute and return the new balance
-    let (returned_new_balance_x1, returned_new_balance_x2) = main(
-        sender_priv_key,
+    let (returned_new_balance_x1, returned_new_balance_x2, returned_agent_id) = main(
+        agent_priv_key,
         r_amount,
-        Point { x: sender_pubkey.x, y: sender_pubkey.y },
+        agent_id,
+        Point { x: agent_pubkey.x, y: agent_pubkey.y },
         Point { x: old_balance_ct.0.x, y: old_balance_ct.0.y },
         Point { x: old_balance_ct.1.x, y: old_balance_ct.1.y },
-        1,
         3,
         amount
     );
@@ -159,7 +163,7 @@ fn test_withdraw_all_balance() {
     );
 
     // Verify: returned new balance decrypts to 0 (withdrew everything)
-    let decrypted_new_balance = decrypt(returned_new_balance_ct, sender_priv_key);
+    let decrypted_new_balance = decrypt(returned_new_balance_ct, agent_priv_key);
     verify_embedding(decrypted_new_balance, 0);
+    assert(returned_agent_id == agent_id);
 }
-

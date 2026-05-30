@@ -27,19 +27,20 @@ fn subtract_ciphertexts(a: CipherText, b: CipherText) -> CipherText {
 }
 
 // ==================== TRANSFER CIRCUIT ====================
-// Allows users to privately transfer tokens to another user
+// Allows one agent to privately transfer tokens to another agent
 // Uses homomorphic addition for receiver's balance (no receiver private key needed!)
 //
 // PUBLIC INPUTS/OUTPUTS BYTE LAYOUT (matching Rust contract):
-// [0..32]:     receiver_address (32)
-// [32..96]:    receiver_pubkey (x: 32, y: 32)
-// [96..224]:   receiver_current_balance (x1.x: 32, x1.y: 32, x2.x: 32, x2.y: 32)
-// [224..352]:  receiver_new_balance (x1.x: 32, x1.y: 32, x2.x: 32, x2.y: 32) - OUTPUT
-// [352..416]:  sender_pubkey (x: 32, y: 32)
-// [416..544]:  sender_current_balance (x1.x: 32, x1.y: 32, x2.x: 32, x2.y: 32)
-// [544..672]:  sender_new_balance (x1.x: 32, x1.y: 32, x2.x: 32, x2.y: 32) - OUTPUT
-// [672..704]:  token (32)
-// Total: 704 bytes
+// [0..64]:     receiver_pubkey (x: 32, y: 32)
+// [64..192]:   receiver_current_balance (x1.x: 32, x1.y: 32, x2.x: 32, x2.y: 32)
+// [192..256]:  sender_pubkey (x: 32, y: 32)
+// [256..384]:  sender_current_balance (x1.x: 32, x1.y: 32, x2.x: 32, x2.y: 32)
+// [384..416]:  token (32)
+// [416..544]:  sender_new_balance (x1.x: 32, x1.y: 32, x2.x: 32, x2.y: 32) - OUTPUT
+// [544..672]:  receiver_new_balance (x1.x: 32, x1.y: 32, x2.x: 32, x2.y: 32) - OUTPUT
+// [672..704]:  sender_agent_id (32) - OUTPUT
+// [704..736]:  receiver_agent_id (32) - OUTPUT
+// Total: 736 bytes
 
 fn main(
     // Private inputs (secrets not revealed in proof)
@@ -47,9 +48,10 @@ fn main(
     transfer_amount: Field,          // Amount to transfer (kept private)
     r_amount_sender: Field,          // Randomness for encrypting transfer amount under sender's key
     r_amount_receiver: Field,        // Randomness for encrypting transfer amount under receiver's key
+    sender_agent_id: Field,
+    receiver_agent_id: Field,
 
     // Public inputs (visible in proof) - ORDER MATTERS for contract!
-    receiver_address: pub Field,
     receiver_pubkey: pub Point,
     receiver_old_balance_x1: pub Point,
     receiver_old_balance_x2: pub Point,
@@ -57,7 +59,7 @@ fn main(
     sender_old_balance_x1: pub Point,
     sender_old_balance_x2: pub Point,
     token: pub Field
-) -> pub (Point, Point, Point, Point) {  // Returns (sender_new_x1, sender_new_x2, receiver_new_x1, receiver_new_x2)
+) -> pub (Point, Point, Point, Point, Field, Field) {  // Returns balances plus both agent IDs
     // Reconstruct EmbeddedCurvePoint and CipherText structs from Point structs
     let sender_pubkey_ec = EmbeddedCurvePoint {
         x: sender_pubkey.x,
@@ -83,6 +85,8 @@ fn main(
 
     // Enforce range constraints
     transfer_amount.assert_max_bit_size::<40>();
+    sender_agent_id.assert_max_bit_size::<32>();
+    receiver_agent_id.assert_max_bit_size::<32>();
 
     // Verify sender's public key matches their private key
     let computed_sender_pubkey = public_key(sender_priv_key);
@@ -107,21 +111,30 @@ fn main(
     let receiver_new_balance_x1 = Point { x: receiver_new_balance_ct.0.x, y: receiver_new_balance_ct.0.y };
     let receiver_new_balance_x2 = Point { x: receiver_new_balance_ct.1.x, y: receiver_new_balance_ct.1.y };
 
-    (sender_new_balance_x1, sender_new_balance_x2, receiver_new_balance_x1, receiver_new_balance_x2)
+    (
+        sender_new_balance_x1,
+        sender_new_balance_x2,
+        receiver_new_balance_x1,
+        receiver_new_balance_x2,
+        sender_agent_id,
+        receiver_agent_id
+    )
 }
 
 // ==================== TESTS ====================
 
 #[test]
 fn test_transfer_basic() {
-    // Setup: Sender with 1000 tokens transfers 300 to receiver with 500 tokens
+    // Setup: Sender agent with 1000 tokens transfers 300 to receiver agent with 500 tokens
     let sender_priv_key = 42;
     let sender_pubkey = public_key(sender_priv_key);
+    let sender_agent_id = 7;
 
     // Receiver's private key is ONLY used in test to verify the result
     // The sender NEVER needs to know this!
     let receiver_priv_key = 100;
     let receiver_pubkey = public_key(receiver_priv_key);
+    let receiver_agent_id = 11;
 
     let sender_balance = 1000;
     let receiver_balance = 500;
@@ -142,12 +155,20 @@ fn test_transfer_basic() {
     let r_amount_receiver = 444;
 
     // Call circuit - it will compute and return both new balances
-    let (sender_new_x1, sender_new_x2, receiver_new_x1, receiver_new_x2) = main(
+    let (
+        sender_new_x1,
+        sender_new_x2,
+        receiver_new_x1,
+        receiver_new_x2,
+        returned_sender_agent_id,
+        returned_receiver_agent_id
+    ) = main(
         sender_priv_key,
         transfer_amount,
         r_amount_sender,
         r_amount_receiver,
-        2, // receiver address
+        sender_agent_id,
+        receiver_agent_id,
         Point { x: receiver_pubkey.x, y: receiver_pubkey.y },
         Point { x: old_balance_receiver_ct.0.x, y: old_balance_receiver_ct.0.y },
         Point { x: old_balance_receiver_ct.1.x, y: old_balance_receiver_ct.1.y },
@@ -174,16 +195,20 @@ fn test_transfer_basic() {
     // Verify: receiver's returned new balance decrypts correctly using RECEIVER'S private key
     let decrypted_receiver_new = decrypt(returned_receiver_new_balance_ct, receiver_priv_key);
     verify_embedding(decrypted_receiver_new, expected_receiver_new_balance);
+    assert(returned_sender_agent_id == sender_agent_id);
+    assert(returned_receiver_agent_id == receiver_agent_id);
 }
 
 #[test]
 fn test_transfer_to_zero_balance() {
-    // Setup: Transfer to user with zero balance
+    // Setup: Transfer to agent with zero balance
     let sender_priv_key = 42;
     let sender_pubkey = public_key(sender_priv_key);
+    let sender_agent_id = 7;
 
     let receiver_priv_key = 100;
     let receiver_pubkey = public_key(receiver_priv_key);
+    let receiver_agent_id = 11;
 
     let sender_balance = 1000;
     let receiver_balance = 0; // Zero balance
@@ -199,12 +224,20 @@ fn test_transfer_to_zero_balance() {
     let r_amount_receiver = 444;
 
     // Call circuit - it will compute and return both new balances
-    let (sender_new_x1, sender_new_x2, receiver_new_x1, receiver_new_x2) = main(
+    let (
+        sender_new_x1,
+        sender_new_x2,
+        receiver_new_x1,
+        receiver_new_x2,
+        returned_sender_agent_id,
+        returned_receiver_agent_id
+    ) = main(
         sender_priv_key,
         transfer_amount,
         r_amount_sender,
         r_amount_receiver,
-        2,
+        sender_agent_id,
+        receiver_agent_id,
         Point { x: receiver_pubkey.x, y: receiver_pubkey.y },
         Point { x: old_balance_receiver_ct.0.x, y: old_balance_receiver_ct.0.y },
         Point { x: old_balance_receiver_ct.1.x, y: old_balance_receiver_ct.1.y },
@@ -229,4 +262,6 @@ fn test_transfer_to_zero_balance() {
 
     let decrypted_receiver_new = decrypt(returned_receiver_new_balance_ct, receiver_priv_key);
     verify_embedding(decrypted_receiver_new, 500);
+    assert(returned_sender_agent_id == sender_agent_id);
+    assert(returned_receiver_agent_id == receiver_agent_id);
 }
