@@ -27,7 +27,7 @@ use stylus_sdk::{
     prelude::*,
     abi::Bytes as AbiBytes,
     call::RawCall,
-    alloy_primitives::{Address, FixedBytes, U256, Bytes},
+    alloy_primitives::{Address, FixedBytes, U256, U32, Bytes},
     alloy_sol_types::{sol, SolCall},
 };
 use core::str::FromStr;
@@ -38,16 +38,6 @@ pub struct Point {
     pub y: [u8; 32],
 }
 
-impl Point {
-    pub fn zero() -> Self {
-        Self { x: [0u8; 32], y: [0u8; 32] }
-    }
-
-    pub fn from_bytes(bytes: [u8; 64]) -> Self {
-        Self { x: bytes[..32].try_into().unwrap(), y: bytes[32..64].try_into().unwrap() }
-    }
-}
-
 // Ciphertext representation (ElGamal over BabyJub, treated as opaque bytes)
 #[derive(PartialEq, Eq)]
 pub struct Ciphertext {
@@ -55,23 +45,16 @@ pub struct Ciphertext {
     pub x2: Point,
 }
 
-impl Ciphertext {
-    pub fn zero() -> Self {
-        Self { x1: Point::zero(), x2: Point::zero() }
-    }
-}
-
 pub struct DepositWidthdrawProofInputs {
-    pub user_pubkey: [u8; 64],
+    pub agent_pubkey: [u8; 64],
     pub current_balance: Ciphertext,
     pub new_balance: Ciphertext,
     pub amount: U256,
-    pub user_address: Address,
     pub token: Address,
+    pub agent_id: u32,
 }
 
 pub struct TransferConfidentialProofInputs {
-    pub receiver_address: Address,
     pub receiver_pubkey: [u8; 64],
     pub receiver_current_balance: Ciphertext,
     pub receiver_new_balance: Ciphertext,
@@ -79,9 +62,15 @@ pub struct TransferConfidentialProofInputs {
     pub sender_current_balance: Ciphertext,
     pub sender_new_balance: Ciphertext,
     pub token: Address,
+    pub sender_agent_id: u32,
+    pub receiver_agent_id: u32,
 }
 
 pub const WETH_TOKEN_ADDRESS: &str = "0x2836ae2ea2c013acd38028fd0c77b92cccfa2ee4";
+
+/// Length of the ABI-packed public inputs blob for the transfer_confidential proof.
+/// See `_decode_transfer_confidential_proof_inputs` for the layout.
+pub const TRANSFER_PROOF_INPUT_LEN: usize = 736;
 
 /// This point represents 0 balance in the Grumpkin Curve
 /// G_GENERATOR_X = 1
@@ -104,24 +93,26 @@ sol_storage! {
         // Allowlist of supported underlying ERC-20 tokens
         mapping(address => bool) supported_tokens;
 
-        // Store per user public key
-        mapping(address => bytes32) pk_x;
-        mapping(address => bytes32) pk_y;
+        // Store per agent public key
+        mapping(uint32 => bytes32) pk_x;
+        mapping(uint32 => bytes32) pk_y;
 
-        // Noir verifier contract (must implement verify(bytes,bytes) -> bool)
+        // Address authorized to act for a given agent_id
+        mapping(uint32 => address) agent_controllers;
+
+        // Noir verifier contract (must implement verify(bytes,bytes32[]) -> bool)
         address deposit_verifier;
         address withdraw_verifier;
         address transfer_verifier;
 
-        // Encrypted balances: mapping(token => mapping(user => ciphertext))
-        mapping(bytes32 => mapping(bytes32 => bytes32)) balances_x1;
-        mapping(bytes32 => mapping(bytes32 => bytes32)) balances_y1;
+        // Encrypted balances split into 4 mappings, one per coordinate.
+        // Layout: balance ciphertext = (x1 = (x1_x, x1_y), x2 = (x2_x, x2_y))
+        // mapping(token => mapping(agent_id => coord))
+        mapping(bytes32 => mapping(uint32 => bytes32)) balances_x1_x;
+        mapping(bytes32 => mapping(uint32 => bytes32)) balances_x1_y;
 
-        mapping(bytes32 => mapping(bytes32 => bytes32)) balances_x2;
-        mapping(bytes32 => mapping(bytes32 => bytes32)) balances_y2;
-
-        // Nullifiers for replay protection: hash(proof) -> used?
-        mapping(bytes32 => bool) nullifiers;
+        mapping(bytes32 => mapping(uint32 => bytes32)) balances_x2_x;
+        mapping(bytes32 => mapping(uint32 => bytes32)) balances_x2_y;
 
         // Reentrancy guard
         ReentrancyGuard guard;
@@ -144,34 +135,31 @@ fn address_to_bytes32(addr: Address) -> FixedBytes<32> {
     FixedBytes::from(out)
 }
 
-fn balance_key(token: Address, user: Address) -> (FixedBytes<32>, FixedBytes<32>) {
-    (address_to_bytes32(token), address_to_bytes32(user))
-}
 
 // Events
 sol! {
     /// Encrypted transfer occurred (logs new encrypted balances)
     event TransferConfidential(
         address indexed token,
-        address indexed from,
-        address indexed to,
+        uint32 indexed from,
+        uint32 indexed to
     );
 
     /// Plain deposit with encrypted balance update
     event Deposit(
         address indexed token,
-        address indexed user_address,
+        uint32 indexed agent_id
     );
 
     /// Plain withdrawal with encrypted balance update
     event Withdraw(
         address indexed token,
-        address indexed user_address
+        uint32 indexed agent_id
     );
 
     event VerifierUpdated(address deposit_verifier, address withdraw_verifier, address transfer_verifier);
     event TokenAllowlistUpdated(address indexed token, bool allowed);
-    event UserPkRegistered(address indexed user, bytes pk);
+    event AgentPkRegistered(uint32 indexed agent_id, address indexed controller, bytes pk);
 
     // Standard ERC-20
     function transfer(address to, uint256 amount) external returns (bool);
@@ -205,23 +193,30 @@ impl ConfidentialERC20 {
     }
 
     // Expects public key should be two points of the elliptic curve (we should use same elliptic
-    // curve as the prover in this case Noir Grumpkin curve to generate this public key)
-    pub fn register_user_pk(&mut self, public_key: [u8; 64]) -> Result<(), Vec<u8>> {
-        let sender = self.vm().msg_sender();
-        if self._get_user_pk(sender) != [0u8; 64] {
-            return Err("User already registered".into());
+    // curve as the prover in this case Noir Grumpkin curve to generate this public key).
+    //
+    // The caller becomes the controller bound to `agent_id` and is the only address allowed to
+    // submit deposit/withdraw/transfer transactions for that agent.
+    pub fn register_agent_pk(&mut self, public_key: [u8; 64], agent_id: u32) -> Result<(), Vec<u8>> {
+        if self._get_agent_pk(agent_id) != [0u8; 64] {
+            return Err("Agent already registered".into());
         }
 
         // Safely convert to FixedBytes<32>
         let pk_x = FixedBytes::<32>::try_from(&public_key[..32]).unwrap();
         let pk_y = FixedBytes::<32>::try_from(&public_key[32..]).unwrap();
 
-        self.pk_x.setter(sender).set(pk_x);
-        self.pk_y.setter(sender).set(pk_y);
+        let agent_key = U32::from(agent_id);
+        self.pk_x.setter(agent_key).set(pk_x);
+        self.pk_y.setter(agent_key).set(pk_y);
 
-        evm::log(UserPkRegistered {
-            user: sender,
-            pk: public_key.into(),
+        let controller = self.vm().msg_sender();
+        self.agent_controllers.setter(agent_key).set(controller);
+
+        evm::log(AgentPkRegistered {
+            agent_id,
+            controller,
+            pk: public_key.to_vec().into(),
         });
 
         // Set the initial balance to 0
@@ -231,46 +226,53 @@ impl ConfidentialERC20 {
         };
 
         self._set_balance(
-            Address::from_str(WETH_TOKEN_ADDRESS).unwrap(), sender, &initial_balance
+            Address::from_str(WETH_TOKEN_ADDRESS).unwrap(), agent_id, &initial_balance
         );
 
         Ok(())
     }
 
-    /// Get encrypted balance for (token, user). Only pk owner can decrypt this balance.
-    pub fn balance_of_enc(&self, token: Address, user: Address) -> [u8; 128] {
-        let (t, u) = balance_key(token, user);
-        let bx1: [u8; 32] = self.balances_x1.get(t).get(u).into();
-        let bx2: [u8; 32] = self.balances_y1.get(t).get(u).into();
-
-        let by1: [u8; 32] = self.balances_x2.get(t).get(u).into();
-        let by2: [u8; 32] = self.balances_y2.get(t).get(u).into();
+    /// Get encrypted balance for (token, agent). Only pk owner can decrypt this balance.
+    pub fn balance_of_enc(&self, token: Address, agent_id: u32) -> [u8; 128] {
+        let t = address_to_bytes32(token);
+        let k = U32::from(agent_id);
+        let x1_x: [u8; 32] = self.balances_x1_x.get(t).get(k).into();
+        let x1_y: [u8; 32] = self.balances_x1_y.get(t).get(k).into();
+        let x2_x: [u8; 32] = self.balances_x2_x.get(t).get(k).into();
+        let x2_y: [u8; 32] = self.balances_x2_y.get(t).get(k).into();
 
         let mut result = [0u8; 128];
-        result[0..32].copy_from_slice(&bx1);
-        result[32..64].copy_from_slice(&bx2);
-        result[64..96].copy_from_slice(&by1);
-        result[96..128].copy_from_slice(&by2);
+        result[0..32].copy_from_slice(&x1_x);
+        result[32..64].copy_from_slice(&x1_y);
+        result[64..96].copy_from_slice(&x2_x);
+        result[96..128].copy_from_slice(&x2_y);
         result
+    }
+
+    pub fn get_agent_controller(&self, agent_id: u32) -> Address {
+        self.agent_controllers.get(U32::from(agent_id))
     }
 
     /// Deposit/Withdraw plain ERC-20 tokens.
     ///
-    /// Required public inputs:
-    /// user_pubkey: pub EmbeddedCurvePoint,
-    /// current_balance_x1: pub EmbeddedCurvePoint,
-    /// current_balance_x2: pub EmbeddedCurvePoint,
-    /// user_address: pub Field,
-    /// token: pub Field
-    /// amount: pub Field,
-    /// new_balance_x1: pub EmbeddedCurvePoint,
-    /// new_balance_x2: pub EmbeddedCurvePoint,
+    /// `proof_inputs` MUST be 416 bytes laid out as:
+    ///
+    /// |  offset   | size | field                                |
+    /// |-----------|------|--------------------------------------|
+    /// |   0..64   |  64  | agent_pubkey                         |
+    /// |  64..192  | 128  | current_balance (ciphertext)         |
+    /// | 192..224  |  32  | token (address in last 20 bytes)     |
+    /// | 224..256  |  32  | amount (big-endian U256)             |
+    /// | 256..384  | 128  | new_balance (ciphertext)             |
+    /// | 384..416  |  32  | agent_id (u32 in last 4 bytes)       |
     pub fn deposit(
         &mut self,
         proof_inputs: Vec<u8>,
         proof: AbiBytes,
     ) -> Result<(), Vec<u8>> {
-        let proof_inputs_fixed: [u8; 416] = proof_inputs.try_into()?;
+        let proof_inputs_fixed: [u8; 416] = proof_inputs
+            .try_into()
+            .map_err(|_| b"bad deposit proof input length".to_vec())?;
         self._deposit_widthdraw(proof_inputs_fixed, proof, true)
     }
 
@@ -279,25 +281,16 @@ impl ConfidentialERC20 {
         proof_inputs: Vec<u8>,
         proof: AbiBytes,
     ) -> Result<(), Vec<u8>> {
-        let proof_inputs_fixed: [u8; 416] = proof_inputs.try_into()?;
+        let proof_inputs_fixed: [u8; 416] = proof_inputs
+            .try_into()
+            .map_err(|_| b"bad withdraw proof input length".to_vec())?;
         self._deposit_widthdraw(proof_inputs_fixed, proof, false)
     }
 
     /// Confidential balance-to-balance transfer.
     ///
-    /// Required public inputs:
-    /// receiver_address: pub Field,
-    /// receiver_pubkey: pub EmbeddedCurvePoint,
-    /// receiver_current_balance_x1: pub EmbeddedCurvePoint,
-    /// receiver_current_balance_x2: pub EmbeddedCurvePoint,
-    /// sender_pubkey: pub EmbeddedCurvePoint,
-    /// sender_current_balance_x1: pub EmbeddedCurvePoint,
-    /// sender_current_balance_x2: pub EmbeddedCurvePoint,
-    /// token: pub Field
-    /// sender_new_balance_x1: pub EmbeddedCurvePoint,
-    /// sender_new_balance_x2: pub EmbeddedCurvePoint,
-    /// receiver_new_balance_x1: pub EmbeddedCurvePoint,
-    /// receiver_new_balance_x2: pub EmbeddedCurvePoint,
+    /// `proof_inputs` MUST be `TRANSFER_PROOF_INPUT_LEN` (736) bytes. See
+    /// `_decode_transfer_confidential_proof_inputs` for the exact layout.
     pub fn transfer_confidential(
         &mut self,
         proof_inputs: Vec<u8>,
@@ -305,42 +298,43 @@ impl ConfidentialERC20 {
     ) -> Result<(), Vec<u8>> {
         self._non_reentrant()?;
 
-        let proof_inputs_fixed: [u8; 704] = proof_inputs.try_into()?;
-
-        let from = self.vm().msg_sender();
-        let sender_pubkey = self._get_user_pk(from);
-        if sender_pubkey == [0u8; 64] {
-            self._release_reentrancy();
-            return Err("User not registered".into());
-        }
+        let proof_inputs_fixed: [u8; TRANSFER_PROOF_INPUT_LEN] = proof_inputs
+            .try_into()
+            .map_err(|_| b"bad transfer proof input length".to_vec())?;
 
         if let Err(e) = self._verify_proof(&proof_inputs_fixed, proof, self.transfer_verifier.get()) {
             self._release_reentrancy();
-            return Err("Proof verification failed".into());
+            return Err([b"Proof verification failed: ".as_ref(), &e].concat());
         }
 
-        let transfer_proof_inputs = self._decode_transfer_confidential_proof_inputs(proof_inputs_fixed);
+        let transfer_proof_inputs = match self._decode_transfer_confidential_proof_inputs(proof_inputs_fixed) {
+            Ok(v) => v,
+            Err(e) => {
+                self._release_reentrancy();
+                return Err(e);
+            }
+        };
 
-        let result = self._sanity_checks_for_transfer(from, &transfer_proof_inputs);
-        if let Err(err) = result {
+        if let Err(err) = self._sanity_checks_for_transfer(&transfer_proof_inputs) {
             self._release_reentrancy();
             return Err(err);
         }
 
+        // Only the registered controller of the sender agent may submit.
+        let caller = self.vm().msg_sender();
+        if self.agent_controllers.get(U32::from(transfer_proof_inputs.sender_agent_id)) != caller {
+            self._release_reentrancy();
+            return Err("Not authorized for sender agent".into());
+        }
+
         let token = transfer_proof_inputs.token;
-        let receiver_address = transfer_proof_inputs.receiver_address;
-        let sender_new_balance = transfer_proof_inputs.sender_new_balance;
-        let receiver_new_balance = transfer_proof_inputs.receiver_new_balance;
+        let from = transfer_proof_inputs.sender_agent_id;
+        let receiver = transfer_proof_inputs.receiver_agent_id;
 
-        self._set_balance(token, from, &sender_new_balance);
-        self._set_balance(token, receiver_address, &receiver_new_balance);
+        self._set_balance(token, from, &transfer_proof_inputs.sender_new_balance);
+        self._set_balance(token, receiver, &transfer_proof_inputs.receiver_new_balance);
 
-        // Emit event with new ciphertexts for indexing/off-chain
-        evm::log(TransferConfidential {
-            token,
-            from,
-            to: transfer_proof_inputs.receiver_address
-        });
+        evm::log(TransferConfidential { token, from, to: receiver });
 
         self._release_reentrancy();
         Ok(())
@@ -385,8 +379,8 @@ impl ConfidentialERC20 {
         self.supported_tokens.get(token)
     }
 
-    pub fn get_user_pk(&self, user: Address) -> [u8; 64] {
-        self._get_user_pk(user)
+    pub fn get_agent_pk(&self, agent_id: u32) -> [u8; 64] {
+        self._get_agent_pk(agent_id)
     }
 }
 
@@ -413,25 +407,14 @@ impl ConfidentialERC20 {
         Ok(())
     }
 
-    /// Set encrypted balance for a user and token.
-    fn _set_balance(&mut self, token: Address, user: Address, ct: &Ciphertext) {
-        let (t, u) = balance_key(token, user);
-        self.balances_x1
-            .setter(t)
-            .setter(u)
-            .set(FixedBytes::from(ct.x1.x));
-        self.balances_y1
-            .setter(t)
-            .setter(u)
-            .set(FixedBytes::from(ct.x1.y));
-        self.balances_x2
-            .setter(t)
-            .setter(u)
-            .set(FixedBytes::from(ct.x2.x));
-        self.balances_y2
-            .setter(t)
-            .setter(u)
-            .set(FixedBytes::from(ct.x2.y));
+    /// Set encrypted balance for an agent and token.
+    fn _set_balance(&mut self, token: Address, agent_id: u32, ct: &Ciphertext) {
+        let t = address_to_bytes32(token);
+        let k = U32::from(agent_id);
+        self.balances_x1_x.setter(t).setter(k).set(FixedBytes::from(ct.x1.x));
+        self.balances_x1_y.setter(t).setter(k).set(FixedBytes::from(ct.x1.y));
+        self.balances_x2_x.setter(t).setter(k).set(FixedBytes::from(ct.x2.x));
+        self.balances_x2_y.setter(t).setter(k).set(FixedBytes::from(ct.x2.y));
     }
 
     /// Verify a Noir proof.
@@ -448,45 +431,48 @@ impl ConfidentialERC20 {
 
         for chunk in proof_inputs.chunks(32) {
             let mut buf = [0u8; 32];
-            buf[..32].copy_from_slice(chunk);
+            buf[..chunk.len()].copy_from_slice(chunk);
             public_inputs_vec.push(FixedBytes::<32>::from(buf));
         }
-    
-        // Typed call to verifier.verify(bytes,bytes)
+
+        // Typed call to verifier.verify(bytes,bytes32[])
         let calldata = verifyCall {
             proof: Bytes::from(proof.to_vec()),
             publicInputs: public_inputs_vec,
         }.abi_encode();
 
-        unsafe {
-            let res: Result<Vec<u8>, Vec<u8>> =RawCall::new_static().call(verifier_address, &calldata);
-            let data = match res {
-                Ok(data) => data,
-                Err(_data) => panic!("Proof verification failed"),
-            };
+        let data = unsafe {
+            RawCall::new_static()
+                .call(verifier_address, &calldata)
+                .map_err(|_| b"verifier call reverted".to_vec())?
+        };
+
+        // verify(bytes,bytes32[]) returns a single bool, ABI-encoded as a 32-byte word
+        // where the last byte is 0 (false) or 1 (true).
+        if data.len() < 32 || data[31] == 0 {
+            return Err(b"proof rejected".to_vec());
         }
-    
+
         Ok(())
     }
 
     /// Plain ERC-20 transfer using typed sol! call
     fn _transfer(&self, token: Address, to: Address, amount: U256) -> Result<(), Vec<u8>> {
         let calldata = transferCall { to, amount }.abi_encode();
-    
-        // raw CALL to token
+
         let res = unsafe {
             RawCall::new()
                 .call(token, &calldata)?
         };
-    
+
         // Standard ERC-20 convention: if it returns a bool, check it.
         // If it returns nothing, treat as success.
         if res.len() >= 32 && res[31] == 0 {
             return Err("ERC20 transfer failed".into());
         }
-    
+
         Ok(())
-    }    
+    }
 
     /// Plain ERC-20 transferFrom using typed sol! call
     fn _transfer_from(
@@ -523,7 +509,7 @@ impl ConfidentialERC20 {
         proof_inputs: [u8; 416],
     ) -> Result<DepositWidthdrawProofInputs, Vec<u8>> {
     
-        let user_pubkey: [u8; 64] = proof_inputs[..64]
+        let agent_pubkey: [u8; 64] = proof_inputs[..64]
             .try_into()
             .map_err(|_| "bad pubkey slice".as_bytes().to_vec())?;
     
@@ -534,59 +520,107 @@ impl ConfidentialERC20 {
         let current_balance = self._decode_ciphertext(current_slice);
     
         // Addresses only takes 20 bytes, so we need to only take the last 20 bytes
-        let user_address = Address::from_slice(&proof_inputs[204..224]);
-        let token = Address::from_slice(&proof_inputs[236..256]);
+        let token = Address::from_slice(&proof_inputs[204..224]);
 
-        let amount_bytes: [u8; 32] = proof_inputs[256..288]
+        let amount_bytes: [u8; 32] = proof_inputs[224..256]
             .try_into()
             .map_err(|_| "bad amount slice".as_bytes().to_vec())?;
         let amount = U256::from_be_bytes(amount_bytes);
 
-        let new_slice: [u8; 128] = proof_inputs[288..416]
+        let new_slice: [u8; 128] = proof_inputs[256..384]
             .try_into()
             .map_err(|_| "bad new_balance slice".as_bytes().to_vec())?;
 
         let new_balance = self._decode_ciphertext(new_slice);
-    
+
+        // agent_id is encoded as a 32-byte big-endian word; only the last 4 bytes are meaningful.
+        let agent_id_bytes: [u8; 4] = proof_inputs[412..416]
+            .try_into()
+            .map_err(|_| "bad agent_id slice".as_bytes().to_vec())?;
+        let agent_id = u32::from_be_bytes(agent_id_bytes);
+
         Ok(DepositWidthdrawProofInputs {
-            user_pubkey,
+            agent_pubkey,
             current_balance,
             new_balance,
-            user_address,
             token,
             amount,
+            agent_id,
         })
     }
 
     /// Parse public inputs into TransferConfidentialProofInputs struct.
-    fn _decode_transfer_confidential_proof_inputs(&self, proof_inputs: [u8; 704]) -> TransferConfidentialProofInputs {
-        TransferConfidentialProofInputs {
-            // Addresses only takes 20 bytes, so we need to only take the last 20 bytes
-            receiver_address: Address::from_slice(&proof_inputs[12..32]),
-            receiver_pubkey: proof_inputs[32..96].try_into().unwrap(),
-            receiver_current_balance: self._decode_ciphertext(proof_inputs[96..224].try_into().unwrap()),
-            sender_pubkey: proof_inputs[224..288].try_into().unwrap(),
-            sender_current_balance: self._decode_ciphertext(proof_inputs[288..416].try_into().unwrap()),
-            // Addresses only takes 20 bytes, so we need to trim
-            token: Address::from_slice(&proof_inputs[428..448]),
-            sender_new_balance: self._decode_ciphertext(proof_inputs[448..576].try_into().unwrap()),
-            receiver_new_balance: self._decode_ciphertext(proof_inputs[576..704].try_into().unwrap()),
-        }
+    ///
+    /// Canonical layout (total = `TRANSFER_PROOF_INPUT_LEN` = 736 bytes):
+    ///
+    /// | offset    | size | field                       |
+    /// |-----------|------|-----------------------------|
+    /// |   0..64   |  64  | receiver_pubkey             |
+    /// |  64..192  | 128  | receiver_current_balance    |
+    /// | 192..256  |  64  | sender_pubkey               |
+    /// | 256..384  | 128  | sender_current_balance      |
+    /// | 384..416  |  32  | token (address in 396..416) |
+    /// | 416..544  | 128  | sender_new_balance          |
+    /// | 544..672  | 128  | receiver_new_balance        |
+    /// | 672..704  |  32  | sender_agent_id   (u32 in 700..704)   |
+    /// | 704..736  |  32  | receiver_agent_id (u32 in 732..736)   |
+    fn _decode_transfer_confidential_proof_inputs(
+        &self,
+        proof_inputs: [u8; TRANSFER_PROOF_INPUT_LEN],
+    ) -> Result<TransferConfidentialProofInputs, Vec<u8>> {
+        let receiver_pubkey: [u8; 64] = proof_inputs[0..64]
+            .try_into()
+            .map_err(|_| b"bad receiver_pubkey slice".to_vec())?;
+        let receiver_current_slice: [u8; 128] = proof_inputs[64..192]
+            .try_into()
+            .map_err(|_| b"bad receiver_current_balance slice".to_vec())?;
+        let sender_pubkey: [u8; 64] = proof_inputs[192..256]
+            .try_into()
+            .map_err(|_| b"bad sender_pubkey slice".to_vec())?;
+        let sender_current_slice: [u8; 128] = proof_inputs[256..384]
+            .try_into()
+            .map_err(|_| b"bad sender_current_balance slice".to_vec())?;
+        let token = Address::from_slice(&proof_inputs[396..416]);
+        let sender_new_slice: [u8; 128] = proof_inputs[416..544]
+            .try_into()
+            .map_err(|_| b"bad sender_new_balance slice".to_vec())?;
+        let receiver_new_slice: [u8; 128] = proof_inputs[544..672]
+            .try_into()
+            .map_err(|_| b"bad receiver_new_balance slice".to_vec())?;
+        let sender_agent_id_bytes: [u8; 4] = proof_inputs[700..704]
+            .try_into()
+            .map_err(|_| b"bad sender_agent_id slice".to_vec())?;
+        let receiver_agent_id_bytes: [u8; 4] = proof_inputs[732..736]
+            .try_into()
+            .map_err(|_| b"bad receiver_agent_id slice".to_vec())?;
+
+        Ok(TransferConfidentialProofInputs {
+            receiver_pubkey,
+            receiver_current_balance: self._decode_ciphertext(receiver_current_slice),
+            sender_pubkey,
+            sender_current_balance: self._decode_ciphertext(sender_current_slice),
+            token,
+            sender_new_balance: self._decode_ciphertext(sender_new_slice),
+            receiver_new_balance: self._decode_ciphertext(receiver_new_slice),
+            sender_agent_id: u32::from_be_bytes(sender_agent_id_bytes),
+            receiver_agent_id: u32::from_be_bytes(receiver_agent_id_bytes),
+        })
     }
 
-    fn _get_user_pk(&self, user: Address) -> [u8; 64] {
-        let pk_x: FixedBytes<32> = self.pk_x.get(user);
-        let pk_y: FixedBytes<32> = self.pk_y.get(user);
-    
+    fn _get_agent_pk(&self, agent_id: u32) -> [u8; 64] {
+        let k = U32::from(agent_id);
+        let pk_x: FixedBytes<32> = self.pk_x.get(k);
+        let pk_y: FixedBytes<32> = self.pk_y.get(k);
+
         let mut pk = [0u8; 64];
         pk[..32].copy_from_slice(pk_x.as_slice());
         pk[32..64].copy_from_slice(pk_y.as_slice());
         pk
-    }    
+    }
 
     // Check if the current balance matches the proof inputs current amount
-    fn _verify_current_amount(&self, token: Address, user: Address, proof_current_balance: &Ciphertext) -> bool {
-        let current_balance = self._decode_ciphertext(self.balance_of_enc(token, user));
+    fn _verify_current_amount(&self, token: Address, agent_id: u32, proof_current_balance: &Ciphertext) -> bool {
+        let current_balance = self._decode_ciphertext(self.balance_of_enc(token, agent_id));
         if current_balance.x1.x != proof_current_balance.x1.x { return false; }
         if current_balance.x1.y != proof_current_balance.x1.y { return false; }
         if current_balance.x2.x != proof_current_balance.x2.x { return false; }
@@ -596,37 +630,39 @@ impl ConfidentialERC20 {
 
     fn _sanity_checks_for_transfer(
         &self,
-        caller_address: Address,
         transfer_proof_inputs: &TransferConfidentialProofInputs
     ) -> Result<(), Vec<u8>> {
         if !self.supported_tokens.get(transfer_proof_inputs.token) {
             return Err("Token not supported".into());
         }
+
         // Receiver checks
-        let receiver_registered_pubkey = self._get_user_pk(transfer_proof_inputs.receiver_address);
-        if receiver_registered_pubkey == [0u8; 64] {
-            return Err("Receiver not registered".into());
+        let registered_receiver_pk = self._get_agent_pk(transfer_proof_inputs.receiver_agent_id);
+        if registered_receiver_pk == [0u8; 64] {
+            return Err("Receiver agent not registered".into());
         }
-        if receiver_registered_pubkey != transfer_proof_inputs.receiver_pubkey {
+        if registered_receiver_pk != transfer_proof_inputs.receiver_pubkey {
             return Err("Receiver public key mismatch".into());
         }
-
         if !self._verify_current_amount(
-            transfer_proof_inputs.token, 
-            transfer_proof_inputs.receiver_address,
+            transfer_proof_inputs.token,
+            transfer_proof_inputs.receiver_agent_id,
             &transfer_proof_inputs.receiver_current_balance
         ) {
             return Err("Receiver Current balance mismatch".into());
         }
 
         // Sender checks
-        let registered_sender_pk = self._get_user_pk(caller_address);
+        let registered_sender_pk = self._get_agent_pk(transfer_proof_inputs.sender_agent_id);
+        if registered_sender_pk == [0u8; 64] {
+            return Err("Sender agent not registered".into());
+        }
         if registered_sender_pk != transfer_proof_inputs.sender_pubkey {
             return Err("Sender public key mismatch".into());
         }
         if !self._verify_current_amount(
             transfer_proof_inputs.token,
-            caller_address, 
+            transfer_proof_inputs.sender_agent_id,
             &transfer_proof_inputs.sender_current_balance
         ) {
             return Err("Sender Current balance mismatch".into());
@@ -635,89 +671,87 @@ impl ConfidentialERC20 {
     }
 
     fn _deposit_widthdraw(
-        &mut self, 
-        proof_inputs: [u8; 416], 
+        &mut self,
+        proof_inputs: [u8; 416],
         proof: AbiBytes,
         is_deposit: bool,
     ) -> Result<(), Vec<u8>> {
         self._non_reentrant()?;
 
-        let from = self.vm().msg_sender();
-        let user_pk = self._get_user_pk(from);
-        if user_pk == [0u8; 64] {
-            self._release_reentrancy();
-            return Err("User not registered".into());
-        }
+        let result = self._deposit_widthdraw_inner(proof_inputs, proof, is_deposit);
+        self._release_reentrancy();
+        result
+    }
 
-        let verifier = if is_deposit {self.deposit_verifier.get()} else { self.withdraw_verifier.get()};
-    
-        if let Err(e) = self._verify_proof(&proof_inputs, proof, verifier) {
-            self._release_reentrancy();
-            return Err(["Proof verification failed: ".as_bytes(), &e].concat());
-        }
+    fn _deposit_widthdraw_inner(
+        &mut self,
+        proof_inputs: [u8; 416],
+        proof: AbiBytes,
+        is_deposit: bool,
+    ) -> Result<(), Vec<u8>> {
+        let caller_address = self.vm().msg_sender();
+
+        let verifier = if is_deposit {
+            self.deposit_verifier.get()
+        } else {
+            self.withdraw_verifier.get()
+        };
+
+        self._verify_proof(&proof_inputs, proof, verifier)
+            .map_err(|e| [b"Proof verification failed: ".as_ref(), &e].concat())?;
 
         let deposit_proof_inputs = self
             ._decode_deposit_withdraw_proof_inputs(proof_inputs)
-            .map_err(|_| "Failed to decode deposit/withdraw proof inputs".as_bytes().to_vec())?;
+            .map_err(|_| b"Failed to decode deposit/withdraw proof inputs".to_vec())?;
 
         if !self.supported_tokens.get(deposit_proof_inputs.token) {
-            self._release_reentrancy();
             return Err("Token not supported".into());
         }
 
-        if user_pk != deposit_proof_inputs.user_pubkey {
-            self._release_reentrancy();
-            return Err("User public key mismatch".into());
+        let agent_pk = self._get_agent_pk(deposit_proof_inputs.agent_id);
+        if agent_pk == [0u8; 64] {
+            return Err("Agent not registered".into());
+        }
+        if agent_pk != deposit_proof_inputs.agent_pubkey {
+            return Err("Agent public key mismatch".into());
         }
 
-        if !self._verify_current_amount(deposit_proof_inputs.token, from, &deposit_proof_inputs.current_balance) {
-            self._release_reentrancy();
+        // Only the registered controller of this agent may submit deposit/withdraw.
+        if self.agent_controllers.get(U32::from(deposit_proof_inputs.agent_id)) != caller_address {
+            return Err("Not authorized for agent".into());
+        }
+
+        if !self._verify_current_amount(
+            deposit_proof_inputs.token,
+            deposit_proof_inputs.agent_id,
+            &deposit_proof_inputs.current_balance,
+        ) {
             return Err("Current balance mismatch".into());
         }
 
         let token = deposit_proof_inputs.token;
-        let user_address = deposit_proof_inputs.user_address;
-        
+        let agent_id = deposit_proof_inputs.agent_id;
         let raw_amount = deposit_proof_inputs.amount;
-        // Since ELGAMAL requires amounts not bigger than 40 bits, we need to scale the amount by 10^6
-        let scale_factor = U256::from(1000000);
-        let amount = raw_amount * scale_factor;
+        // ElGamal in the circuit operates on values bounded by ~40 bits, so the prover passes
+        // amounts in "micro-token" units. Scale by 10^6 to recover the on-chain ERC-20 amount.
+        // NOTE: the prover and the on-chain amount MUST agree on this scaling.
+        let scale_factor = U256::from(1_000_000u64);
+        let amount = raw_amount
+            .checked_mul(scale_factor)
+            .ok_or_else(|| b"amount overflow".to_vec())?;
         let new_balance = deposit_proof_inputs.new_balance;
 
-        // Move plain tokens into custody
         if is_deposit {
-            self._transfer_from(
-                token,
-                from,
-                self.vm().contract_address(),
-                amount
-            )?;
-
-            // Store the NEW balance ciphertext (no math on-chain)
-            self._set_balance(token, user_address, &new_balance);
-
-            evm::log(Deposit {
-                token,
-                user_address
-            });
+            self._transfer_from(token, caller_address, self.vm().contract_address(), amount)?;
+            self._set_balance(token, agent_id, &new_balance);
+            evm::log(Deposit { token, agent_id });
         } else {
-            // withdraw
-            self._transfer(
-                token,
-                user_address,
-                amount
-            )?;
-
-            // Store the NEW balance ciphertext (no math on-chain)
-            self._set_balance(token, user_address, &new_balance);
-
-            evm::log(Withdraw {
-                token,
-                user_address
-            });
+            // withdraw — pay out to the registered controller (== caller_address here).
+            self._transfer(token, caller_address, amount)?;
+            self._set_balance(token, agent_id, &new_balance);
+            evm::log(Withdraw { token, agent_id });
         }
 
-        self._release_reentrancy();
         Ok(())
     }
 }

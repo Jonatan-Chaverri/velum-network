@@ -4,7 +4,7 @@ CREATE TABLE "users" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "name" TEXT NOT NULL,
     "last_name" TEXT NOT NULL,
-    "organization" TEXT NOT NULL,
+    "organization" TEXT,
     "email" TEXT NOT NULL,
     "password" TEXT NOT NULL,
     "created_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,

@@ -22,10 +22,12 @@
     "@noble/secp256k1": "^3.0.0",
     "@prisma/client": "^6.8.2",
     "@supabase/supabase-js": "^2.80.0",
+    "@types/jsonwebtoken": "^9.0.10",
     "@types/pg": "^8.15.6",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
+    "jsonwebtoken": "^9.0.3",
     "pg": "^8.16.3",
     "viem": "^2.38.6"
   },

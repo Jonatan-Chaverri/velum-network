@@ -1,10 +1,9 @@
 import Link from "next/link";
 import { Plus } from "lucide-react";
 
-import { AgentCard } from "@/components/dashboard/agent-card";
+import { AgentsList } from "@/components/dashboard/agents-list";
 import { DashboardTopbar } from "@/components/dashboard/topbar";
 import { Button } from "@/components/ui/button";
-import { agents } from "@/lib/data/mock";
 
 export default function AgentsPage() {
   return (
@@ -21,11 +20,7 @@ export default function AgentsPage() {
           </Link>
         </Button>
       </div>
-      <div className="grid gap-6 xl:grid-cols-2">
-        {agents.map((agent) => (
-          <AgentCard key={agent.id} agent={agent} />
-        ))}
-      </div>
+      <AgentsList />
     </div>
   );
 }

@@ -7,6 +7,9 @@ import getUserRoutes from './routes/getUser';
 import tokensRoutes from './routes/tokens';
 import configRoutes from './routes/config';
 import deleteUserRoutes from './routes/deleteUser';
+import authRoutes from './routes/auth';
+import agentsRoutes from './routes/agents';
+import marketplaceRoutes from './routes/marketplace';
 
 dotenv.config();
 
@@ -28,6 +31,9 @@ app.use('/api/getUser', getUserRoutes);
 app.use('/api/tokens', tokensRoutes);
 app.use('/api/config', configRoutes);
 app.use('/api/deleteUser', deleteUserRoutes);
+app.use('/api/auth', authRoutes);
+app.use('/api/agents', agentsRoutes);
+app.use('/api/marketplace', marketplaceRoutes);
 
 // Health check
 app.get('/health', (req, res) => {
@@ -55,4 +61,3 @@ if (typeof require !== 'undefined' && require.main === module) {
 export default app;
 // Also export as CommonJS for compatibility
 module.exports = app;
-
