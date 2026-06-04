@@ -1,6 +1,5 @@
 import express from 'express';
 import { TransactionService } from '../db/services/transactionService';
-import { ContractService } from '../db/services/contractService';
 
 const router = express.Router();
 
@@ -63,28 +62,9 @@ router.post('/', async (req, res, next) => {
       });
     }
 
-    // Resolve contract_id from contract_address if provided
-    let contract_id: string | null = null;
-    
-    const network = process.env.NETWORK;
-    if (!network) {
-      return res.status(500).json({
-        error: 'NETWORK environment variable is not set',
-      });
-    }
-
-    const contract = await ContractService.getContractByNameAndNetwork(
-      'CONFIDENTIAL_ERC20',
-      network
-    );
-
-    if (!contract) {
-      return res.status(404).json({
-        error: `Contract with name CONFIDENTIAL_ERC20 and network ${network} not found`,
-      });
-    }
-
-    contract_id = contract.id;
+    // Transactions are no longer linked to a `contracts` DB row; the on-chain
+    // address is read from CONFIDENTIAL_ERC20_ADDRESS in the environment.
+    const contract_id: string | null = null;
 
     // Create transaction with default status 'pending'
     const transaction = await TransactionService.createTransaction({

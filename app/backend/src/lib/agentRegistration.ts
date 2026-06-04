@@ -1,4 +1,4 @@
-import { ContractService } from '../db/services/contractService';
+import { getConfidentialErc20Address } from './contracts';
 
 const { createWalletClient, http, parseAbi } = require('viem');
 const { privateKeyToAccount } = require('viem/accounts');
@@ -28,26 +28,17 @@ export async function registerAgentPublicKeyOnChain(params: {
   agentId: bigint;
 }) {
   const rpcUrl = process.env.RPC_URL;
-  const network = process.env.NETWORK;
   const accountPrivateKey = process.env.ACCOUNT_PRIVATE_KEY;
 
   if (!rpcUrl) {
     throw new Error('RPC_URL environment variable is not set');
   }
 
-  if (!network) {
-    throw new Error('NETWORK environment variable is not set');
-  }
-
   if (!accountPrivateKey) {
     throw new Error('ACCOUNT_PRIVATE_KEY environment variable is not set');
   }
 
-  const contract = await ContractService.getContractByNameAndNetwork('CONFIDENTIAL_ERC20', network);
-
-  if (!contract) {
-    throw new Error(`Contract with name CONFIDENTIAL_ERC20 and network ${network} not found`);
-  }
+  const contractAddress = getConfidentialErc20Address();
 
   const account = privateKeyToAccount(accountPrivateKey);
   const client = createWalletClient({
@@ -56,7 +47,7 @@ export async function registerAgentPublicKeyOnChain(params: {
   });
 
   const txHash = await client.writeContract({
-    address: contract.address,
+    address: contractAddress,
     abi: confidentialErc20Abi,
     functionName: 'register_agent_pk',
     args: [publicKeyHexToBytes(params.publicKey), params.agentId],

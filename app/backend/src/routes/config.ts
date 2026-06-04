@@ -1,5 +1,5 @@
 import express from 'express';
-import { ContractService } from '../db/services/contractService';
+import { getConfidentialErc20Address } from '../lib/contracts';
 
 const router = express.Router();
 
@@ -11,7 +11,6 @@ const router = express.Router();
 router.get('/', async (req, res, next) => {
   try {
     const rpcUrl = process.env.RPC_URL;
-    const network = process.env.NETWORK;
 
     if (!rpcUrl) {
       return res.status(500).json({
@@ -19,29 +18,13 @@ router.get('/', async (req, res, next) => {
       });
     }
 
-    if (!network) {
-      return res.status(500).json({
-        error: 'NETWORK environment variable is not set',
-      });
-    }
-
-    // Get Confidential ERC20 contract from database
-    const contract = await ContractService.getContractByNameAndNetwork(
-      'CONFIDENTIAL_ERC20',
-      network
-    );
-
-    if (!contract) {
-      return res.status(404).json({
-        error: `Contract with name CONFIDENTIAL_ERC20 and network ${network} not found`,
-      });
-    }
+    const confidentialErc20Address = getConfidentialErc20Address();
 
     res.json({
       success: true,
       config: {
         rpc_url: rpcUrl,
-        confidential_erc20: contract.address,
+        confidential_erc20: confidentialErc20Address,
       },
     });
   } catch (error: any) {

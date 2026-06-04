@@ -16,5 +16,6 @@ if [[ "$1" == "--test" ]]; then
 else
   cargo stylus deploy \
     --endpoint="$RPC_URL" \
-    --private-key="$ACCOUNT_PRIVATE_KEY"
+    --private-key="$ACCOUNT_PRIVATE_KEY" \
+    --max-fee-per-gas-gwei="${MAX_FEE_PER_GAS_GWEI:-0.2}"
 fi
