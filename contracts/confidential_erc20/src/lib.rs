@@ -22,7 +22,6 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
-use stylus_sdk::evm;
 use stylus_sdk::{
     prelude::*,
     abi::Bytes as AbiBytes,
@@ -214,7 +213,7 @@ impl ConfidentialERC20 {
         let controller = self.vm().msg_sender();
         self.agent_controllers.setter(agent_key).set(controller);
 
-        evm::log(AgentPkRegistered {
+        self.vm().log(AgentPkRegistered {
             agent_id,
             controller,
             pk: public_key.to_vec().into(),
@@ -335,7 +334,7 @@ impl ConfidentialERC20 {
         self._set_balance(token, from, &transfer_proof_inputs.sender_new_balance);
         self._set_balance(token, receiver, &transfer_proof_inputs.receiver_new_balance);
 
-        evm::log(TransferConfidential { token, from, to: receiver });
+        self.vm().log(TransferConfidential { token, from, to: receiver });
 
         self._release_reentrancy();
         Ok(())
@@ -352,7 +351,7 @@ impl ConfidentialERC20 {
         self.deposit_verifier.set(deposit_verifier);
         self.withdraw_verifier.set(withdraw_verifier);
         self.transfer_verifier.set(transfer_verifier);
-        evm::log(VerifierUpdated {
+        self.vm().log(VerifierUpdated {
             deposit_verifier,
             withdraw_verifier,
             transfer_verifier,
@@ -386,7 +385,7 @@ impl ConfidentialERC20 {
         }
         let previous_owner = self.owner.get();
         self.owner.set(new_owner);
-        evm::log(OwnershipTransferred { previous_owner, new_owner });
+        self.vm().log(OwnershipTransferred { previous_owner, new_owner });
         Ok(())
     }
 
@@ -457,7 +456,7 @@ impl ConfidentialERC20 {
         }.abi_encode();
 
         let data = unsafe {
-            RawCall::new_static()
+            RawCall::new_static(self.vm())
                 .call(verifier_address, &calldata)
                 .map_err(|_| b"verifier call reverted".to_vec())?
         };
@@ -476,7 +475,7 @@ impl ConfidentialERC20 {
         let calldata = transferCall { to, amount }.abi_encode();
 
         let res = unsafe {
-            RawCall::new()
+            RawCall::new(self.vm())
                 .call(token, &calldata)?
         };
 
@@ -500,7 +499,7 @@ impl ConfidentialERC20 {
         let calldata = transferFromCall { from, to, amount }.abi_encode();
 
         let res = unsafe {
-            RawCall::new()
+            RawCall::new(self.vm())
                 .call(token, &calldata)?
         };
     
@@ -759,12 +758,12 @@ impl ConfidentialERC20 {
         if is_deposit {
             self._transfer_from(token, caller_address, self.vm().contract_address(), amount)?;
             self._set_balance(token, agent_id, &new_balance);
-            evm::log(Deposit { token, agent_id });
+            self.vm().log(Deposit { token, agent_id });
         } else {
             // withdraw — pay out to the registered controller (== caller_address here).
             self._transfer(token, caller_address, amount)?;
             self._set_balance(token, agent_id, &new_balance);
-            evm::log(Withdraw { token, agent_id });
+            self.vm().log(Withdraw { token, agent_id });
         }
 
         Ok(())
