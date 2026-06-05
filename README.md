@@ -1,19 +1,24 @@
 # Velum Network
 
-> **Programmable commerce infrastructure for AI agents**
+> **Commerce infrastructure for AI agents with confidential transfer amounts and balances**
 
-Velum Network is a commerce, payment, and monetization layer for AI agents.
+Velum Network is a payment, monetization, and discovery layer for AI agents. It is built on a confidential transfer primitive so that:
 
-It helps developers take existing AI services such as OpenAI agents, LangChain workflows, MCP servers, APIs, automations, and internal tools, then add:
+- the amount moved between two agents in any given transaction stays private, and
+- each agent's balance is encrypted on-chain — only the agent's key holder can decrypt it, so **no one else can see how much your agent has earned or is currently holding**.
 
-- programmable payments
-- confidential transactions
+The rest of the system (service registration, discovery, settlement, deposit and withdrawal events) behaves like ordinary on-chain infrastructure.
+
+It lets developers take existing AI services — OpenAI agents, LangChain workflows, MCP servers, APIs, automations, and internal tools — and add:
+
+- programmable payments and settlement
+- confidential agent-to-agent transfer amounts
 - service monetization
-- optional service discovery
+- service discovery
 - agent identities and credentials
 - autonomous commerce workflows
 
-Velum should feel closer to **Stripe + marketplace infrastructure for AI agents** than to a wallet, exchange, or closed platform.
+Velum is **not** another open agent marketplace. The discovery layer sits on top of payment rails whose transfer amounts are hidden by zero-knowledge proofs — so listings are commercial endpoints first, not advertisements competing for attention.
 
 ## What Velum Is
 
@@ -28,17 +33,15 @@ Velum is:
 Velum is not:
 
 - a hosted agent runtime
-- a mandatory marketplace ecosystem
+- a public agent directory or ad listing
 - a wallet-centric application
 - a cryptography demo
 
-Your agents do **not** have to live inside Velum.
+Your agents do **not** have to live inside Velum. Velum integrates into the systems you already run, and agent-to-agent transfer amounts that flow through it stay confidential.
 
-Instead, Velum integrates into the systems you already run.
+## Who It's For
 
-## Core Product Story
-
-Developers already have:
+Developers and teams that already operate:
 
 - OpenAI agents
 - LangChain workflows
@@ -47,15 +50,13 @@ Developers already have:
 - automations
 - internal services
 
-Those systems need a way to:
+…and need a way to:
 
 - charge for usage
 - receive confidential payments
 - discover other services
 - buy services autonomously
 - enforce budgets and permissions
-
-Velum provides that infrastructure.
 
 ## Main Use Cases
 
@@ -69,7 +70,7 @@ Register an existing service and add:
 - confidential payment handling
 - programmable access rules
 
-Examples:
+Common examples:
 
 - summarization APIs
 - research agents
@@ -97,26 +98,31 @@ Developers can enforce:
 - approval rules
 - workflow-level budgets
 
-### 4. Use Optional Discovery Infrastructure
+### 4. Use the Discovery Layer (Optional)
 
-Velum includes a marketplace-style discovery layer so agents can find services.
+Velum includes a discovery layer so agents can find services. It is optional, and it sits on top of payment rails whose per-transfer amounts and balances are hidden by zero-knowledge cryptography.
 
-This is optional.
+That means:
+
+- a listing exposes only what the merchant chooses to publish (endpoint, category, pricing)
+- when one agent pays another for a service, the **amount of that transfer is not revealed on-chain**
+- each agent's **balance is encrypted on-chain** and can only be decrypted by the agent's key holder — competitors and outside observers cannot see how much your agent has earned
+- observers can see that a transfer happened between two agents, but not the amount and not the resulting balances
+- private relationships and direct enterprise integrations are first-class — not a workaround
 
 You can:
 
 - publish your service for discovery
-- use Velum only for payments
-- support private relationships and direct integrations
-- combine public distribution with private enterprise workflows
+- use Velum only for payments and skip the discovery layer entirely
+- combine public distribution with private enterprise workflows on the same infrastructure
 
 ## How It Works
 
-The typical integration flow looks like this:
+The typical integration flow:
 
-1. Developer creates a Velum account
-2. Developer registers an agent or service
-3. Developer configures:
+1. Create a Velum account
+2. Register an agent or service
+3. Configure:
    - service endpoint
    - pricing
    - categories
@@ -125,25 +131,18 @@ The typical integration flow looks like this:
    - confidential payment identity
    - API credentials
    - programmable payment controls
-5. Developer integrates the Velum SDK into an existing AI service
+5. Integrate the Velum SDK into your service
 6. Other agents can:
    - discover the service
    - request invoices or access
    - pay confidentially
    - consume the service
 
-## SDK-First Integration
+## SDK Integration
 
-The SDK is central to the product.
+The SDK is the primary integration surface. It is designed to feel familiar to teams already using SDKs like Stripe, Clerk, Auth0, or Supabase.
 
-Velum should feel like:
-
-- Stripe SDK
-- Clerk SDK
-- Auth0 SDK
-- Supabase SDK
-
-Example conceptual integration:
+Example integration:
 
 ```ts
 import { VelumClient } from "@velum/sdk";
@@ -161,7 +160,7 @@ app.post("/summarize", async (req, res) => {
 });
 ```
 
-Conceptually, the SDK should make it easy to:
+With the SDK you can:
 
 - register services
 - verify that a request is paid for
@@ -170,13 +169,11 @@ Conceptually, the SDK should make it easy to:
 - trigger confidential purchases
 - manage agent identities and access
 
-## Architecture Direction
+## Architecture
 
-Velum sits between agent infrastructure and payment infrastructure.
+Velum sits between agent infrastructure and payment infrastructure. It does not replace agent runtimes.
 
-It does not replace agent runtimes.
-
-It adds:
+It provides:
 
 - payment identity
 - confidential settlement
@@ -203,154 +200,63 @@ Velum commerce layer
 Settlement + infrastructure
 ```
 
-## Marketplace Positioning
+## Discovery, Plus a Confidential Transfer Primitive
 
-The marketplace is best understood as **optional discovery infrastructure**.
+The discovery layer is what most people call a marketplace, but it is built on top of payment rails with confidential transfer amounts and confidential balances. The result is closer to a private B2B directory than a public agent feed:
 
-That means:
+- listings advertise an **endpoint**, not a transaction history
+- merchants control exactly what is published
+- when an agent pays another through a listing, the **transferred amount is not exposed on-chain**
+- each agent's **balance is encrypted on-chain**; only the agent's key holder can decrypt it, so outside observers cannot see how much your agent is earning over time
+- you can run private listings, gated lists, or skip publication entirely and still use the same payment infrastructure
 
-- you can list services so other agents can find them
-- you can use Velum without relying on marketplace traffic
-- you do not need to rebuild your business inside Velum
-- you can monetize existing services directly through SDK integrations
+This removes the two most sensitive pieces of information from a public marketplace — the price actually paid in each transfer and the running revenue per agent — while keeping the rest of the system auditable.
 
-This is important because developers want:
+## Confidential Transfer Amounts and Balances
 
-- composability
-- direct control over distribution
-- flexible go-to-market models
-- low integration friction
+The confidentiality guarantee in Velum is **narrow and specific**: the amount of value transferred from one agent to another in any given transfer is hidden, and the plaintext of each agent's balance is readable only by that agent. Everything else is ordinary on-chain state.
 
-## Confidential Transactions
+**What is private**
 
-Velum supports confidential payments because AI agents often need privacy around:
+- the value transferred between two agents in each agent-to-agent transfer
+- the **plaintext** of each agent's balance — only the holder of the matching key can decrypt it, so no one else can see how much your agent has earned or is currently holding
 
-- balances
-- transfer amounts
-- service costs
-- spending patterns
-- operational behavior
+**What is public**
 
-For most users, this should feel like infrastructure rather than the main product story.
+- the existence of a transfer between two agents (sender and receiver agent IDs are public inputs to the proof)
+- the token being transferred
+- the agent public keys involved
+- deposit and withdrawal amounts (these are plaintext, since they correspond to visible ERC-20 movements in and out of custody)
+- the balance **ciphertexts** stored on-chain and the fact that they are updated by each operation (the plaintext stays encrypted)
 
-The primary value is:
+**How it works**
 
-- programmable commerce
-- service monetization
-- autonomous purchasing
+- balances are stored on-chain as ElGamal ciphertexts; only the holder of the matching key can decrypt them
+- deposits, withdrawals, and transfers are validated by Noir-generated SNARKs verified on Arbitrum Stylus
+- in the transfer circuit the amount is a private witness — it does **not** appear in the proof's public inputs, so no observer can read it from chain data
+- deposit and withdraw circuits keep the amount as a public input by design, because the contract needs it to move the underlying ERC-20
 
-Confidential settlement supports those workflows in the background.
+See [contracts/README.md](contracts/README.md) and [wallet_proof/README.md](wallet_proof/README.md) for the on-chain components and the proof circuits that back them.
 
-## Onboarding Model
+## Getting Started
 
-A clean onboarding flow should look like this:
-
-1. Create account
-2. Register service or agent
-3. Add endpoint and pricing
+1. Create an account
+2. Register a service or agent
+3. Add an endpoint and pricing
 4. Configure merchant details and permissions
 5. Generate credentials
-6. Integrate SDK
+6. Integrate the SDK
 7. Start accepting or making agent payments
 
-## Terminology Recommendations
+## Repository Layout
 
-Prefer:
-
-- programmable commerce
-- service monetization
-- confidential transactions
-- agent payments
-- discovery infrastructure
-- merchant profile
-- service registration
-- payment identity
-- SDK integration
-
-Avoid leading with:
-
-- confidential wallet
-- encrypted balance as the main story
-- treasury infrastructure
-- hosted agents
-- mandatory marketplace
-- cryptography-first framing
-
-## Why This Direction Is Stronger
-
-### SDK-first positioning improves adoption
-
-Developers adopt infrastructure that fits their stack.
-
-If Velum looks like an SDK-first layer, teams can plug it into:
-
-- existing services
-- existing agent runtimes
-- existing internal tools
-
-That is much easier to adopt than a product that appears to require rebuilding everything inside a new environment.
-
-### Marketplace lock-in was risky
-
-A mandatory marketplace story creates friction:
-
-- developers fear platform dependence
-- teams assume migration cost
-- adoption looks like a business-model decision instead of a technical integration
-
-Making discovery optional preserves flexibility while still giving Velum a network story.
-
-### Infrastructure positioning is more scalable
-
-Infrastructure scales better than a closed application model because it can support:
-
-- public marketplaces
-- private enterprise deployments
-- internal automations
-- direct service-to-service payments
-- hybrid monetization models
-
-### Developer onboarding gets simpler
-
-The message becomes:
-
-1. you already have an agent or service
-2. Velum helps you monetize it
-3. integrate the SDK
-4. start receiving or making payments
-
-That is much easier to understand than:
-
-1. create a new kind of wallet
-2. understand cryptographic balances
-3. move into a new platform model
-
-### Better for grants and hackathons
-
-This positioning is stronger for hackathons, grants, and ecosystem partnerships because it clearly answers:
-
-- what problem is being solved
-- who can use it today
-- how it integrates into real developer workflows
-- why it can grow into broader agent infrastructure
-
-It also makes demos easier:
-
-- take an existing agent
-- add Velum
-- monetize the endpoint
-- let another agent discover and pay for it
-
-## Current App Direction
-
-The frontend prototype currently includes:
+The repository currently includes:
 
 - a public landing page
-- a public discover-agents directory
-- a public docs page
+- a public agent directory
+- a public docs site
 - a public contact page
 - a dashboard for account-level management
+- confidential payment contracts and supporting circuits
 
-These should continue to reinforce the same product message:
-
-**Velum helps developers add programmable commerce to the AI agents and services they already run.**
+All surfaces reinforce the same product message: **Velum helps developers add programmable commerce to the AI agents and services they already run.**

@@ -1,310 +1,366 @@
-# zkWallet Transfer Proof Circuit
+# Velum Network Proof Circuits
 
-Zero-knowledge proof circuit for confidential balance updates in the zkWallet system.
+Zero-knowledge proof circuits for confidential balance updates in Velum Network.
 
 ## Overview
 
-This Noir circuit proves that a confidential token transfer is valid without revealing:
-- Sender's current balance
-- Transfer amount
-- Sender's new balance
-- Randomness used in encryptions
+This workspace contains three Noir circuits that back the confidential token workflows of Velum Network:
 
-**What the circuit proves:**
-1. Sender has sufficient balance for the transfer
-2. Transfer amount is encrypted correctly under both sender and recipient keys
-3. New balance is computed correctly using homomorphic subtraction
-4. All amounts are within valid range (≤ 2^40)
-5. Transaction is bound to specific context (anti-replay)
+| Circuit    | Purpose                                                                | Homomorphic op |
+| ---------- | ---------------------------------------------------------------------- | -------------- |
+| `deposit`  | Add a plaintext deposit `amount` to an agent's encrypted balance.      | Addition       |
+| `withdraw` | Remove a plaintext withdraw `amount` from an agent's encrypted balance. | Subtraction    |
+| `transfer` | Move a private `transfer_amount` from a sender agent to a receiver agent, updating both encrypted balances. | Sender: subtraction; receiver: addition |
 
-## Circuit Interface
+Each circuit produces a SNARK that the Stylus contract verifies before mutating on-chain state. The circuits never reveal:
 
-### Private Inputs (Witness)
+- the agent's current balance
+- the resulting new balance
+- (for `transfer`) the transfer amount
+- the randomness used during encryption
+- the agent's private key
 
-These values are known only to the prover and never revealed:
+The deposit and withdraw circuits expose `amount` publicly because the underlying ERC-20 transfer must be observable on-chain.
 
-| Input | Type | Description | Example |
-|-------|------|-------------|---------|
-| `current_balance` | `Field` | Sender's current balance | `1000` |
-| `transfer_amount` | `Field` | Amount being transferred | `100` |
-| `r_old_balance` | `Field` | Randomness for old balance encryption | `0x1a2b3c...` |
-| `r_transfer_sender` | `Field` | Randomness for transfer under sender's key | `0x4d5e6f...` |
-| `r_transfer_recipient` | `Field` | Randomness for transfer under recipient's key | `0x7g8h9i...` |
+## Workspace Layout
 
-### Public Inputs
+```
+wallet_proof/
+├── deposit/             # Deposit circuit (homomorphic addition)
+├── withdraw/            # Withdraw circuit (homomorphic subtraction)
+├── transfer/            # Agent-to-agent transfer circuit
+├── test_data_generator/ # Helper circuit for producing fixtures
+├── contracts/
+│   ├── DepositVerifier.sol
+│   ├── WithdrawVerifier.sol
+│   └── TransferVerifier.sol
+├── generate-verifier.mjs
+├── Nargo.toml           # Workspace manifest
+└── package.json         # JS tooling for proof generation
+```
 
-These values are visible to everyone and included in the proof:
+The workspace `Nargo.toml` lists `deposit`, `withdraw`, `transfer`, and `test_data_generator` as members.
 
-| Input | Type | Description |
-|-------|------|-------------|
-| `sender_pubkey` | `EmbeddedCurvePoint` | Sender's ElGamal public key |
-| `old_balance_x1` | `EmbeddedCurvePoint` | Old balance ciphertext part 1 (r·G) |
-| `old_balance_x2` | `EmbeddedCurvePoint` | Old balance ciphertext part 2 (r·H + m·G) |
-| `new_balance_x1` | `EmbeddedCurvePoint` | New balance ciphertext part 1 |
-| `new_balance_x2` | `EmbeddedCurvePoint` | New balance ciphertext part 2 |
-| `transfer_sender_x1` | `EmbeddedCurvePoint` | Transfer under sender key, part 1 |
-| `transfer_sender_x2` | `EmbeddedCurvePoint` | Transfer under sender key, part 2 |
-| `transfer_recipient_x1` | `EmbeddedCurvePoint` | Transfer under recipient key, part 1 |
-| `transfer_recipient_x2` | `EmbeddedCurvePoint` | Transfer under recipient key, part 2 |
-| `recipient_pubkey` | `EmbeddedCurvePoint` | Recipient's ElGamal public key |
-| `from` | `Field` | Sender address |
-| `to` | `Field` | Recipient address |
-| `token` | `Field` | Token contract address |
-| `chainId` | `Field` | Chain ID (e.g., 42161 for Arbitrum) |
-| `methodTag` | `Field` | Method identifier |
+## Shared Types
+
+All circuits use a slim `Point` struct that matches the Solidity / Stylus verifier ABI:
+
+```noir
+struct Point {
+    x: Field,
+    y: Field
+}
+```
+
+Internally, circuits reconstruct `EmbeddedCurvePoint` (with `is_infinite: false`) and `CipherText = (EmbeddedCurvePoint, EmbeddedCurvePoint)` from these `Point`s. A `CipherText` is exposed across the ABI as four `Point`s (`x1.x, x1.y, x2.x, x2.y`).
+
+Common conventions:
+
+- All balances and amounts are `Field` elements constrained to `≤ 2^40 - 1`.
+- All `agent_id` values are constrained to `≤ 2^32 - 1`.
+- `token` is a 32-byte field that identifies the token contract.
+- ElGamal is used on the BabyJub embedded curve, in the exponential variant `(x1 = r·G, x2 = r·H + m·G)`.
+- The prover must always supply fresh, cryptographically secure randomness for every encryption.
+
+## Circuit Interfaces
+
+### Deposit (`deposit/src/main.nr`)
+
+```noir
+fn main(
+    // Private inputs
+    agent_priv_key: Field,
+    r_amount: Field,
+    agent_id: Field,
+
+    // Public inputs
+    agent_pubkey: pub Point,
+    current_balance_x1: pub Point,
+    current_balance_x2: pub Point,
+    token: pub Field,
+    amount: pub Field
+) -> pub (Point, Point, Field)
+```
+
+**Private inputs**
+
+| Input            | Type    | Description                                                       |
+| ---------------- | ------- | ----------------------------------------------------------------- |
+| `agent_priv_key` | `Field` | Agent's ElGamal private key. Used to prove ownership of pubkey.   |
+| `r_amount`       | `Field` | Randomness for encrypting the deposit amount.                     |
+| `agent_id`       | `Field` | Off-chain agent identifier, exposed as a public output.           |
+
+**Public inputs**
+
+| Input                | Type    | Description                                                      |
+| -------------------- | ------- | ---------------------------------------------------------------- |
+| `agent_pubkey`       | `Point` | Agent's ElGamal public key.                                      |
+| `current_balance_x1` | `Point` | Current balance ciphertext, component `x1`.                      |
+| `current_balance_x2` | `Point` | Current balance ciphertext, component `x2`.                      |
+| `token`              | `Field` | Token contract identifier.                                       |
+| `amount`             | `Field` | Plaintext deposit amount (visible because the ERC-20 transfer is observable). |
+
+**Public outputs**
+
+`(new_balance_x1: Point, new_balance_x2: Point, agent_id: Field)` — the updated encrypted balance and the agent identifier.
+
+**ABI byte layout (matches Rust contract)**
+
+```
+[0..64]    agent_pubkey            (x, y)
+[64..192]  current_balance_ct      (x1.x, x1.y, x2.x, x2.y)
+[192..224] token
+[224..256] amount
+[256..384] new_balance_ct  (OUTPUT)
+[384..416] agent_id        (OUTPUT)
+Total: 416 bytes
+```
+
+### Withdraw (`withdraw/src/main.nr`)
+
+The interface is identical to `deposit`. The only behavioral difference is that the homomorphic update is a subtraction:
+
+```
+new_balance_ct = current_balance_ct - encrypt(agent_pubkey, amount, r_amount)
+```
+
+The ABI byte layout is the same (416 bytes).
+
+### Transfer (`transfer/src/main.nr`)
+
+```noir
+fn main(
+    // Private inputs
+    sender_priv_key: Field,
+    transfer_amount: Field,
+    r_amount_sender: Field,
+    r_amount_receiver: Field,
+    sender_agent_id: Field,
+    receiver_agent_id: Field,
+
+    // Public inputs
+    receiver_pubkey: pub Point,
+    receiver_old_balance_x1: pub Point,
+    receiver_old_balance_x2: pub Point,
+    sender_pubkey: pub Point,
+    sender_old_balance_x1: pub Point,
+    sender_old_balance_x2: pub Point,
+    token: pub Field
+) -> pub (Point, Point, Point, Point, Field, Field)
+```
+
+**Private inputs**
+
+| Input               | Type    | Description                                                       |
+| ------------------- | ------- | ----------------------------------------------------------------- |
+| `sender_priv_key`   | `Field` | Sender's ElGamal private key.                                     |
+| `transfer_amount`   | `Field` | Confidential transfer amount.                                     |
+| `r_amount_sender`   | `Field` | Randomness for encrypting the amount under the sender's key.      |
+| `r_amount_receiver` | `Field` | Randomness for encrypting the amount under the receiver's key.    |
+| `sender_agent_id`   | `Field` | Sender's agent identifier (exposed as a public output).           |
+| `receiver_agent_id` | `Field` | Receiver's agent identifier (exposed as a public output).         |
+
+**Public inputs**
+
+| Input                     | Type    | Description                                              |
+| ------------------------- | ------- | -------------------------------------------------------- |
+| `receiver_pubkey`         | `Point` | Receiver's ElGamal public key.                           |
+| `receiver_old_balance_x1` | `Point` | Receiver's current balance ciphertext, component `x1`.   |
+| `receiver_old_balance_x2` | `Point` | Receiver's current balance ciphertext, component `x2`.   |
+| `sender_pubkey`           | `Point` | Sender's ElGamal public key.                             |
+| `sender_old_balance_x1`   | `Point` | Sender's current balance ciphertext, component `x1`.     |
+| `sender_old_balance_x2`   | `Point` | Sender's current balance ciphertext, component `x2`.     |
+| `token`                   | `Field` | Token contract identifier.                               |
+
+**Public outputs**
+
+```
+(
+  sender_new_balance_x1:   Point,
+  sender_new_balance_x2:   Point,
+  receiver_new_balance_x1: Point,
+  receiver_new_balance_x2: Point,
+  sender_agent_id:         Field,
+  receiver_agent_id:       Field
+)
+```
+
+**ABI byte layout (matches Rust contract)**
+
+```
+[0..64]    receiver_pubkey
+[64..192]  receiver_current_balance
+[192..256] sender_pubkey
+[256..384] sender_current_balance
+[384..416] token
+[416..544] sender_new_balance     (OUTPUT)
+[544..672] receiver_new_balance   (OUTPUT)
+[672..704] sender_agent_id        (OUTPUT)
+[704..736] receiver_agent_id      (OUTPUT)
+Total: 736 bytes
+```
+
+> **Note:** the sender does **not** need the receiver's private key. The transfer amount is encrypted independently under both public keys; homomorphic addition is then performed under the receiver's key, and homomorphic subtraction under the sender's key.
+
+## Circuit Logic
+
+### Deposit / Withdraw
+
+```
+1. Range constraints
+   ├─ amount   ≤ 2^40
+   └─ agent_id ≤ 2^32
+
+2. Key ownership
+   └─ assert public_key(agent_priv_key) == agent_pubkey
+
+3. Encrypt amount
+   └─ amount_ct = encrypt(agent_pubkey, amount, r_amount)
+
+4. Homomorphic update
+   ├─ deposit:  new_balance_ct = current_balance_ct + amount_ct
+   └─ withdraw: new_balance_ct = current_balance_ct - amount_ct
+```
+
+### Transfer
+
+```
+1. Range constraints
+   ├─ transfer_amount   ≤ 2^40
+   ├─ sender_agent_id   ≤ 2^32
+   └─ receiver_agent_id ≤ 2^32
+
+2. Sender key ownership
+   └─ assert public_key(sender_priv_key) == sender_pubkey
+
+3. Encrypt under both keys
+   ├─ transfer_sender_ct   = encrypt(sender_pubkey,   transfer_amount, r_amount_sender)
+   └─ transfer_receiver_ct = encrypt(receiver_pubkey, transfer_amount, r_amount_receiver)
+
+4. Homomorphic update
+   ├─ sender_new_balance   = sender_old_balance   - transfer_sender_ct
+   └─ receiver_new_balance = receiver_old_balance + transfer_receiver_ct
+```
 
 ## Cryptographic Details
 
-### Encryption Scheme
+### Encryption scheme
 
-**ElGamal on BabyJub Curve (Exponential Variant)**
+Exponential ElGamal on the BabyJub curve:
 
-Ciphertext structure: `(x1, x2)` where:
-- `x1 = r·G` (ephemeral key)
-- `x2 = r·H + m·G` (encrypted message)
+- `x1 = r·G`
+- `x2 = r·H + m·G`
 
-Where:
-- `G` = BabyJub generator point
-- `H` = recipient's public key
-- `r` = random scalar (must be fresh for each encryption!)
-- `m` = plaintext message
+Where `G` is the BabyJub generator, `H` is the recipient's public key, `r` is fresh randomness, and `m` is the plaintext.
 
-### Homomorphic Property
+### Homomorphism
 
-ElGamal supports additive homomorphism:
+ElGamal is additively homomorphic when both operands are encrypted under the same key:
+
 ```
 Enc_H(a) + Enc_H(b) = Enc_H(a + b)
 Enc_H(a) - Enc_H(b) = Enc_H(a - b)
 ```
 
-**CRITICAL:** Homomorphic operations only work when both ciphertexts are encrypted under the SAME public key!
+For `transfer`, two independent encryptions of `transfer_amount` are produced so the sender and receiver balances can each be updated under their own key.
 
-This is why we need TWO transfer ciphertexts:
-- `transfer_sender_ct`: Encrypted under sender's key (for homomorphic subtraction)
-- `transfer_recipient_ct`: Encrypted under recipient's key (for delivery)
+### Range bounds
 
-### Range Constraints
+All amounts are constrained to fit in 40 bits (≈ 1.1 trillion units). All `agent_id`s are constrained to 32 bits. These bounds keep range proofs efficient and prevent overflow in homomorphic operations.
 
-**Single-limb strategy with 40-bit bounds**
+## Building and Testing
 
-All amounts constrained to: `0 ≤ value ≤ 2^40 - 1`
-
-**Rationale:**
-- 40 bits = ~1.1 trillion units
-- Sufficient for most token amounts with reasonable decimals
-- Small enough for efficient range proofs
-- Prevents overflow attacks in homomorphic operations
-
-**Implementation:**
-```noir
-current_balance.assert_max_bit_size::<40>();
-transfer_amount.assert_max_bit_size::<40>();
-expected_new_balance.assert_max_bit_size::<40>();
-```
-
-### Domain Binding
-
-Proof is cryptographically bound to transaction context:
-- `from`: Sender address (prevents sender impersonation)
-- `to`: Recipient address (prevents recipient substitution)
-- `token`: Token contract (prevents cross-token replay)
-- `chainId`: Blockchain ID (prevents cross-chain replay)
-- `methodTag`: Method identifier (prevents cross-method replay)
-
-These fields are public inputs, so the verifier checks they match the transaction.
-
-## Circuit Logic Flow
-
-```
-1. Range Constraints
-   ├─ current_balance ≤ 2^40
-   ├─ transfer_amount ≤ 2^40
-   └─ Check: current_balance - transfer_amount ≥ 0 (sufficient balance)
-
-2. Verify Old Balance
-   └─ Assert: encrypt(sender_pubkey, current_balance, r_old) == old_balance_ct
-
-3. Verify Transfer Encryption (Sender Key)
-   └─ Assert: encrypt(sender_pubkey, transfer_amount, r_transfer_sender) == transfer_sender_ct
-
-4. Verify Transfer Encryption (Recipient Key)
-   └─ Assert: encrypt(recipient_pubkey, transfer_amount, r_transfer_recipient) == transfer_recipient_ct
-
-5. Verify Homomorphic Balance Update
-   └─ Assert: old_balance_ct - transfer_sender_ct == new_balance_ct
-
-6. Verify New Balance Range
-   └─ Assert: (current_balance - transfer_amount) ≤ 2^40
-```
-
-## Encoding and Data Types
-
-### Field Elements
-
-All scalar values encoded as `Field` (BN254 scalar field):
-- Modulus: `21888242871839275222246405745257275088548364400416034343698204186575808495617`
-- 254 bits
-- Addresses should be encoded as Field by converting from bytes
-
-### Elliptic Curve Points
-
-Type: `EmbeddedCurvePoint` (BabyJub curve)
-
-Structure:
-```noir
-{
-    x: Field,           // x-coordinate
-    y: Field,           // y-coordinate
-    is_infinite: bool   // true if point at infinity
-}
-```
-
-**Encoding from JavaScript:**
-```typescript
-// Example point encoding
-const point = {
-    x: "0x1234...",  // hex string or bigint
-    y: "0x5678...",
-    is_infinite: false
-};
-```
-
-### Ciphertext Encoding
-
-Each ciphertext is TWO points: `(x1, x2)`
-
-From JavaScript, split into 4 separate point parameters:
-```typescript
-// Ciphertext
-const ct = { x1: Point, x2: Point };
-
-// Pass to circuit as:
-old_balance_x1: ct.x1,
-old_balance_x2: ct.x2
-```
-
-## Integration Guide
-
-### Step 1: Compile Circuit
+Compile every circuit in the workspace:
 
 ```bash
 cd wallet_proof
 nargo compile
 ```
 
-Output: `target/wallet_proof.json` (compiled circuit)
+Compiled artifacts land in `target/<circuit>.json`.
 
-### Step 2: Set Up NoirJS
+Run all Noir tests:
 
 ```bash
-npm install @noir-lang/noir_js @noir-lang/backend_barretenberg
+nargo test
 ```
 
-### Step 3: Generate Proof (TypeScript)
+Existing tests include:
 
-```typescript
-import { BarretenbergBackend } from '@noir-lang/backend_barretenberg';
-import { Noir } from '@noir-lang/noir_js';
-import circuit from './circuits/wallet_proof.json';
+- `deposit::test_deposit_basic`, `test_deposit_zero_balance`
+- `withdraw::test_withdraw_basic`
+- `transfer::test_transfer_basic`, `test_transfer_to_zero_balance`
+
+## Generating Proofs from JavaScript
+
+The workspace ships with `package.json` already wired for proof generation:
+
+```bash
+npm install
+```
+
+Dependencies include `@noir-lang/noir_js`, `@noir-lang/backend_barretenberg`, and `@aztec/bb.js`.
+
+A minimal proving flow (using `deposit` as an example):
+
+```ts
+import { BarretenbergBackend } from "@noir-lang/backend_barretenberg";
+import { Noir } from "@noir-lang/noir_js";
+import circuit from "./target/deposit.json" assert { type: "json" };
 
 const backend = new BarretenbergBackend(circuit);
 const noir = new Noir(circuit, backend);
 
-// Prepare inputs (match circuit interface)
 const inputs = {
-    current_balance: "1000",
-    transfer_amount: "100",
-    r_old_balance: "0x...",
-    r_transfer_sender: "0x...",
-    r_transfer_recipient: "0x...",
-    sender_pubkey: { x: "0x...", y: "0x...", is_infinite: false },
-    // ... all other public inputs
+  agent_priv_key: "0x...",
+  r_amount: "0x...",
+  agent_id: "7",
+  agent_pubkey: { x: "0x...", y: "0x..." },
+  current_balance_x1: { x: "0x...", y: "0x..." },
+  current_balance_x2: { x: "0x...", y: "0x..." },
+  token: "0x...",
+  amount: "300",
 };
 
-// Generate proof
 const { witness } = await noir.execute(inputs);
 const proof = await backend.generateProof(witness);
 const publicInputs = await backend.generatePublicInputs(witness);
 ```
 
-### Step 4: Send to Smart Contract
+For `transfer`, swap the circuit JSON and use the transfer input shape described above.
 
-```typescript
-// Call Stylus contract
-await contract.confidential_transfer(
-    newBalanceCiphertext,
-    transferRecipientCiphertext,
-    publicInputs,
-    proof
-);
+## Solidity Verifiers
+
+Pre-generated verifier contracts live in `contracts/`:
+
+- `DepositVerifier.sol`
+- `WithdrawVerifier.sol`
+- `TransferVerifier.sol`
+
+To regenerate them from the compiled circuits, run:
+
+```bash
+node generate-verifier.mjs
 ```
-
-See `INTEGRATION_GUIDE.md` for complete integration instructions.
 
 ## Security Considerations
 
-### Critical Requirements
+1. **Fresh randomness.** Never reuse `r_amount`, `r_amount_sender`, or `r_amount_receiver` across encryptions. Reuse leaks plaintext relationships.
+2. **Private key protection.** Private keys are passed as witnesses; they are used only to prove ownership of the public key and must never leave the proving environment.
+3. **Key consistency.** Homomorphic addition / subtraction is only valid when both ciphertexts are encrypted under the same key. The circuits enforce this by construction.
+4. **Range bounds.** All amounts and `agent_id`s are range-constrained inside the circuit; do not bypass these checks in client code.
+5. **Public `amount` on deposit/withdraw.** This is intentional: the contract must move plaintext ERC-20 funds. The confidential balance update around it is still proven in zero knowledge.
 
-1. **Fresh Randomness**: NEVER reuse `r` values across encryptions
-   - Reusing randomness leaks plaintext differences
-   - Use cryptographically secure random number generator
-   - Generate new `r` for every encryption
+### Attacks prevented
 
-2. **Key Consistency**: Homomorphic operations require same public key
-   - `old_balance_ct` encrypted under `sender_pubkey`
-   - `transfer_sender_ct` encrypted under `sender_pubkey`
-   - This allows: `old_balance_ct - transfer_sender_ct = new_balance_ct`
-
-3. **Private Key Protection**: Never include private keys in circuit
-   - Circuit only uses public keys
-   - Private keys stay client-side for decryption only
-
-4. **Range Bounds**: All amounts must fit in 40 bits
-   - Prevents overflow in homomorphic operations
-   - Enforced by circuit constraints
-
-### Attack Vectors Prevented
-
-- **Insufficient Balance**: Circuit checks `current_balance - transfer_amount` doesn't underflow
-- **Balance Inflation**: Homomorphic check ensures new balance is correctly computed
-- **Amount Overflow**: Range constraints prevent values > 2^40
-- **Replay Attacks**: Domain binding ties proof to specific transaction context
-- **Key Substitution**: Public keys are public inputs, verified by contract
-
-## Testing
-
-Run circuit tests:
-```bash
-nargo test
-```
-
-Tests included:
-- `test_valid_transfer`: Happy path with valid inputs
-- `test_homomorphic_subtraction`: Verify homomorphic property
-- `test_wrong_new_balance_fails`: Attack attempt (should fail)
-
-See `TESTING_GUIDE.md` for comprehensive testing strategies.
-
-## Performance Characteristics
-
-**Proof Generation Time**: ~2-5 seconds (browser)
-**Proof Size**: ~1-2 KB
-**Public Input Size**: ~1-2 KB
-**Verification Gas**: ~250-500k gas (on-chain)
-
-## Limitations
-
-1. **Single-limb only**: Amounts limited to 2^40 (~1.1 trillion)
-   - For larger amounts, multi-limb extension needed
-2. **Sender balance only**: Circuit doesn't update recipient balance
-   - Recipient receives encrypted transfer, updates separately
-3. **No batch transfers**: One transfer per proof
-   - Could be extended for batch operations
+- **Balance inflation / forgery** — the homomorphic update is enforced by the circuit and the verifier.
+- **Amount overflow** — 40-bit range constraints prevent overflow in homomorphic operations.
+- **Key substitution** — public keys are public inputs and bound to the proof; the contract checks them against on-chain state.
+- **Sender impersonation** — the circuit asserts `public_key(sender_priv_key) == sender_pubkey`.
 
 ## References
 
-- **Noir Language**: https://noir-lang.org
-- **ElGamal Encryption**: https://en.wikipedia.org/wiki/ElGamal_encryption
-- **BabyJub Curve**: https://eips.ethereum.org/EIPS/eip-2494
-- **Barretenberg Backend**: https://github.com/AztecProtocol/barretenberg
-- **Task Specification**: https://github.com/Jonatan-Chaverri/arg25-Projects/issues/1
+- Noir Language — https://noir-lang.org
+- ElGamal Encryption — https://en.wikipedia.org/wiki/ElGamal_encryption
+- BabyJub Curve — https://eips.ethereum.org/EIPS/eip-2494
+- Barretenberg Backend — https://github.com/AztecProtocol/barretenberg

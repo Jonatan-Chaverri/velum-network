@@ -2,7 +2,7 @@
   "name": "zk-wallet-test",
   "version": "1.0.0",
   "type": "module",
-  "description": "Testing scripts for zkWallet",
+  "description": "Testing scripts for Velum",
   "scripts": {
     "test": "node test-proof-only.mjs",
     "test:full": "node test-complete-flow.mjs",

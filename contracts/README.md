@@ -1,180 +1,145 @@
-![Image](./header.png)
+# Velum Network — Smart Contracts
 
-# Stylus Hello World
+This directory holds every on-chain component of Velum Network and the tooling required to deploy and bootstrap them. The contracts are intended to run on **Arbitrum Sepolia** (Stylus-enabled).
 
-Project starter template for writing Arbitrum Stylus programs in Rust using the [stylus-sdk](https://github.com/OffchainLabs/stylus-sdk-rs). It includes a Rust implementation of a basic counter Ethereum smart contract:
+## Layout
 
-```js
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.13;
-
-contract Counter {
-    uint256 public number;
-
-    function setNumber(uint256 newNumber) public {
-        number = newNumber;
-    }
-
-    function increment() public {
-        number++;
-    }
-}
+```
+contracts/
+├── confidential_erc20/   Arbitrum Stylus (Rust) custody contract
+├── verifier/             Hardhat project — Solidity Noir verifiers
+└── test_contracts/       Hardhat scripts — initialization & integration tests
 ```
 
-To set up more minimal example that still uses the Stylus SDK, use `cargo stylus new --minimal <YOUR_PROJECT_NAME>` under [OffchainLabs/cargo-stylus](https://github.com/OffchainLabs/cargo-stylus).
+| Subdirectory                                               | Purpose                                                                 |
+| ---------------------------------------------------------- | ----------------------------------------------------------------------- |
+| [confidential_erc20](confidential_erc20/README.md)         | Stylus-based confidential ERC-20 custody contract.                      |
+| [verifier](verifier/README.md)                             | Deploys the three Noir-generated Solidity verifiers (deposit, withdraw, transfer). |
+| [test_contracts](test_contracts/README.md)                 | Initializes `confidential_erc20` and exercises its endpoints end-to-end. |
 
-## Quick Start 
+## Deployment Order
 
-Install [Rust](https://www.rust-lang.org/tools/install), and then install the Stylus CLI tool with Cargo
+The contracts must be deployed and wired together in this exact order:
+
+1. **Deploy the three Noir verifiers** from `verifier/`.
+2. **Deploy the `confidential_erc20` Stylus contract** from `confidential_erc20/`.
+3. **Initialize `confidential_erc20`** with the verifier addresses using the `initialize` script in `test_contracts/`.
+
+The diagram below summarises the wiring:
+
+```text
+verifier/                       confidential_erc20/
+ ├── DepositVerifier ─┐
+ ├── WithdrawVerifier ─┼──►  init(deposit, withdraw, transfer)
+ └── TransferVerifier ─┘                  ▲
+                                          │
+                              test_contracts/scripts/initialize.js
+```
+
+## Prerequisites
+
+- Node.js 18+ and npm
+- Rust toolchain (managed by `rust-toolchain.toml` inside `confidential_erc20/`)
+- [`cargo-stylus`](https://github.com/OffchainLabs/cargo-stylus): `cargo install --force cargo-stylus cargo-stylus-check`
+- The `wasm32-unknown-unknown` Rust target: `rustup target add wasm32-unknown-unknown`
+- An Arbitrum Sepolia RPC URL and a funded deployer private key
+
+## Step 1 — Deploy the Verifiers
 
 ```bash
-cargo install --force cargo-stylus cargo-stylus-check
+cd verifier
+npm install
+
+# Configure environment
+cp .env.example .env   # if present, otherwise create manually
+# .env must contain:
+#   RPC_URL=https://sepolia-rollup.arbitrum.io/rpc
+#   ACCOUNT_PRIVATE_KEY=<deployer key without 0x prefix>
+
+npm run compile
+npm run deploy:all
 ```
 
-Add the `wasm32-unknown-unknown` build target to your Rust compiler:
+`deploy:all` runs `scripts/deploy-all.js`, which deploys `DepositVerifier`, `WithdrawVerifier`, and `TransferVerifier` against the `sepolia` network. The resulting addresses are written to `deployments.json` and also printed to the console.
 
-```
-rustup target add wasm32-unknown-unknown
-```
+Copy the three addresses; you will reuse them in Step 3.
 
-You should now have it available as a Cargo subcommand:
+## Step 2 — Deploy `confidential_erc20`
 
 ```bash
-cargo stylus --help
+cd ../confidential_erc20
+
+# Configure environment
+cp .env.example .env
+# .env must contain:
+#   RPC_URL=<arbitrum sepolia rpc>
+#   ACCOUNT_PRIVATE_KEY=<deployer key>
+#   # optional:
+#   MAX_FEE_PER_GAS_GWEI=0.2
+
+# (Optional) sanity-check the WASM build without sending a tx
+./deploy.sh --test
+
+# Deploy
+./deploy.sh
 ```
 
-### ABI Export
+`deploy.sh` wraps `cargo stylus deploy` with the values from `.env`. It performs both the deploy and activation transactions and prints the final contract address. Record this as `CONFIDENTIAL_ERC20_ADDRESS`.
 
-You can export the Solidity ABI for your program by using the `cargo stylus` tool as follows:
+See [confidential_erc20/README.md](confidential_erc20/README.md) for the contract ABI, agent model, and proof-input layouts.
+
+## Step 3 — Initialize the Contract
+
+`confidential_erc20` ships uninitialized. The `test_contracts/` project contains the script that wires the verifiers to the custody contract.
 
 ```bash
-cargo stylus export-abi
+cd ../test_contracts
+npm install
+
+# Configure environment
+cp .env.example .env
+# .env must contain:
+#   ACCOUNT_PRIVATE_KEY=<owner key, same one that deployed the Stylus contract>
+#   CONFIDENTIAL_ERC20_ADDRESS=<address from Step 2>
+#   DEPOSIT_VERIFIER_ADDRESS=<address from Step 1>
+#   WITHDRAW_VERIFIER_ADDRESS=<address from Step 1>
+#   TRANSFER_VERIFIER_ADDRESS=<address from Step 1>
+#   WETH_TOKEN_ADDRESS=<WETH token used by the contract>
+
+npm run initialize
 ```
 
-Exporting ABIs uses a feature that is enabled by default in your Cargo.toml:
+The script:
 
-```toml
-[features]
-export-abi = ["stylus-sdk/export-abi"]
-```
+- Detects whether the contract has already been initialized.
+- If uninitialized, calls `init(depositVerifier, withdrawVerifier, transferVerifier)`.
+- If already initialized, calls `setVerifier(...)` to replace the existing verifier addresses (owner-only).
 
-## Deploying
+After this step the deployment is live and ready to accept agent registrations and confidential operations.
 
-You can use the `cargo stylus` command to also deploy your program to the Stylus testnet. We can use the tool to first check
-our program compiles to valid WASM for Stylus and will succeed a deployment onchain without transacting. By default, this will use the Stylus testnet public RPC endpoint. See here for [Stylus testnet information](https://docs.arbitrum.io/stylus/reference/testnet-information)
+## Step 4 (Optional) — Run the Integration Tests
+
+The same project includes a full end-to-end test that registers an agent, deposits, withdraws, and verifies that invalid proofs are rejected:
 
 ```bash
-cargo stylus check
+cd test_contracts
+npm run test_erc20
 ```
 
-If successful, you should see:
+See [test_contracts/README.md](test_contracts/README.md) for details and troubleshooting.
 
-```bash
-Finished release [optimized] target(s) in 1.88s
-Reading WASM file at stylus-hello-world/target/wasm32-unknown-unknown/release/stylus-hello-world.wasm
-Compressed WASM size: 8.9 KB
-Program succeeded Stylus onchain activation checks with Stylus version: 1
-```
+## Upgrading or Redeploying
 
-Next, we can estimate the gas costs to deploy and activate our program before we send our transaction. Check out the [cargo-stylus](https://github.com/OffchainLabs/cargo-stylus) README to see the different wallet options for this step:
+- **Replacing a verifier** — redeploy from `verifier/`, then re-run `npm run initialize` in `test_contracts/`; it will call `setVerifier` since the contract is already initialized.
+- **Replacing the custody contract** — redeploy from `confidential_erc20/`, update `CONFIDENTIAL_ERC20_ADDRESS` in `test_contracts/.env`, and run `npm run initialize` again to wire it to the existing verifiers.
+- **Transferring ownership** — call `transferOwnership(newOwner)` on the custody contract. Only the new owner can submit `transferConfidential` afterwards.
 
-```bash
-cargo stylus deploy \
-  --private-key-path=<PRIVKEY_FILE_PATH> \
-  --estimate-gas
-```
+## Network Notes
 
-You will then see the estimated gas cost for deploying before transacting:
+All three subprojects default to Arbitrum Sepolia:
 
-```bash
-Deploying program to address e43a32b54e48c7ec0d3d9ed2d628783c23d65020
-Estimated gas for deployment: 1874876
-```
+- RPC: `https://sepolia-rollup.arbitrum.io/rpc`
+- Hardhat network name: `sepolia` (defined in each `hardhat.config.js`)
+- Stylus deployment uses the `RPC_URL` in `confidential_erc20/.env`
 
-The above only estimates gas for the deployment tx by default. To estimate gas for activation, first deploy your program using `--mode=deploy-only`, and then run `cargo stylus deploy` with the `--estimate-gas` flag, `--mode=activate-only`, and specify `--activate-program-address`.
-
-
-Here's how to deploy:
-
-```bash
-cargo stylus deploy \
-  --private-key-path=<PRIVKEY_FILE_PATH>
-```
-
-The CLI will send 2 transactions to deploy and activate your program onchain.
-
-```bash
-Compressed WASM size: 8.9 KB
-Deploying program to address 0x457b1ba688e9854bdbed2f473f7510c476a3da09
-Estimated gas: 1973450
-Submitting tx...
-Confirmed tx 0x42db…7311, gas used 1973450
-Activating program at address 0x457b1ba688e9854bdbed2f473f7510c476a3da09
-Estimated gas: 14044638
-Submitting tx...
-Confirmed tx 0x0bdb…3307, gas used 14044638
-```
-
-Once both steps are successful, you can interact with your program as you would with any Ethereum smart contract.
-
-## Calling Your Program
-
-This template includes an example of how to call and transact with your program in Rust using [ethers-rs](https://github.com/gakonst/ethers-rs) under the `examples/counter.rs`. However, your programs are also Ethereum ABI equivalent if using the Stylus SDK. **They can be called and transacted with using any other Ethereum tooling.**
-
-By using the program address from your deployment step above, and your wallet, you can attempt to call the counter program and increase its value in storage:
-
-```rs
-abigen!(
-    Counter,
-    r#"[
-        function number() external view returns (uint256)
-        function setNumber(uint256 number) external
-        function increment() external
-    ]"#
-);
-let counter = Counter::new(address, client);
-let num = counter.number().call().await;
-println!("Counter number value = {:?}", num);
-
-let _ = counter.increment().send().await?.await?;
-println!("Successfully incremented counter via a tx");
-
-let num = counter.number().call().await;
-println!("New counter number value = {:?}", num);
-```
-
-Before running, set the following env vars or place them in a `.env` file (see: [.env.example](./.env.example)) in this project:
-
-```
-RPC_URL=https://sepolia-rollup.arbitrum.io/rpc
-STYLUS_CONTRACT_ADDRESS=<the onchain address of your deployed program>
-PRIV_KEY_PATH=<the file path for your priv key to transact with>
-```
-
-Next, run:
-
-```
-cargo run --example counter --target=<YOUR_ARCHITECTURE>
-```
-
-Where you can find `YOUR_ARCHITECTURE` by running `rustc -vV | grep host`. For M1 Apple computers, for example, this is `aarch64-apple-darwin` and for most Linux x86 it is `x86_64-unknown-linux-gnu`
-
-## Build Options
-
-By default, the cargo stylus tool will build your project for WASM using sensible optimizations, but you can control how this gets compiled by seeing the full README for [cargo stylus](https://github.com/OffchainLabs/cargo-stylus). If you wish to optimize the size of your compiled WASM, see the different options available [here](https://github.com/OffchainLabs/cargo-stylus/blob/main/OPTIMIZING_BINARIES.md).
-
-## Peeking Under the Hood
-
-The [stylus-sdk](https://github.com/OffchainLabs/stylus-sdk-rs) contains many features for writing Stylus programs in Rust. It also provides helpful macros to make the experience for Solidity developers easier. These macros expand your code into pure Rust code that can then be compiled to WASM. If you want to see what the `stylus-hello-world` boilerplate expands into, you can use `cargo expand` to see the pure Rust code that will be deployed onchain.
-
-First, run `cargo install cargo-expand` if you don't have the subcommand already, then:
-
-```
-cargo expand --all-features --release --target=<YOUR_ARCHITECTURE>
-```
-
-Where you can find `YOUR_ARCHITECTURE` by running `rustc -vV | grep host`. For M1 Apple computers, for example, this is `aarch64-apple-darwin`.
-
-## License
-
-This project is fully open source, including an Apache-2.0 or MIT license at your choosing under your own copyright.
+To target a different network, update the corresponding `.env` files and the `networks` block in each `hardhat.config.js`.
