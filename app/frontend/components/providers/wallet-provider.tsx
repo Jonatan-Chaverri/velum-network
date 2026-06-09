@@ -56,7 +56,10 @@ const DEFAULT_CONFIG: WalletConfig = {
 
 const WalletContext = createContext<WalletContextValue | null>(null);
 const DISCONNECTED_WALLET_KEY = "velum_wallet_disconnected";
-const DEFAULT_REGISTER_AGENT_GAS_LIMIT = BigInt(1_000_000);
+// Fallback when eth_estimateGas fails. Must cover the most expensive flow:
+// deposit/withdraw verify an UltraHonk proof on-chain (~2M gas) plus the
+// Stylus contract logic and the ERC-20 transfer.
+const DEFAULT_FALLBACK_GAS_LIMIT = BigInt(8_000_000);
 const DEFAULT_MAX_PRIORITY_FEE_PER_GAS_WEI = BigInt(20_000_000);
 const DEFAULT_MIN_MAX_FEE_PER_GAS_WEI = BigInt(100_000_000);
 
@@ -141,7 +144,7 @@ async function getTransactionFeeConfig(
   provider: EthereumProvider,
   request: TransactionRequest & { from: string },
 ) {
-  let gasLimit = DEFAULT_REGISTER_AGENT_GAS_LIMIT;
+  let gasLimit = DEFAULT_FALLBACK_GAS_LIMIT;
 
   try {
     const estimatedGas = (await provider.request({
@@ -151,7 +154,12 @@ async function getTransactionFeeConfig(
 
     gasLimit = (hexToBigint(estimatedGas) * BigInt(12)) / BigInt(10);
   } catch (estimateError) {
-    console.warn("Gas estimation failed, using fallback gas limit:", estimateError);
+    // A revert during estimation carries the real on-chain failure reason;
+    // surface it loudly because the preflight eth_call may mask it later.
+    console.error(
+      "[wallet] eth_estimateGas failed (likely an on-chain revert), using fallback gas limit:",
+      estimateError,
+    );
   }
 
   let maxPriorityFeePerGas = DEFAULT_MAX_PRIORITY_FEE_PER_GAS_WEI;

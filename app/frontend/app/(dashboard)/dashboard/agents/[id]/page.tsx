@@ -2,9 +2,20 @@
 
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import { Eye, EyeOff, Globe, KeyRound, Layers3, Shield, Sparkles } from "lucide-react";
+import {
+  AlertTriangle,
+  Eye,
+  EyeOff,
+  Globe,
+  KeyRound,
+  Layers3,
+  Shield,
+  Sparkles,
+  Wallet,
+} from "lucide-react";
 
 import { DashboardTopbar } from "@/components/dashboard/topbar";
+import { useWallet } from "@/components/providers/wallet-provider";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -16,6 +27,15 @@ import {
   decryptAgentBalance,
   formatTokenAmount,
 } from "@/lib/utils/agent-balance";
+import {
+  AGENT_TOKEN_DECIMALS,
+  buildApproveCalldata,
+  buildDepositCalldata,
+  convertAgentDepositPublicInputs,
+  convertDisplayAmountToProofAmount,
+  convertProofAmountToErc20Amount,
+  generateAgentDepositProof,
+} from "@/lib/utils/agent-private-features";
 import {
   getAgentPrivateKey,
   saveAgentPrivateKey,
@@ -56,14 +76,34 @@ function DetailItem({
 
 export default function AgentDetailsPage() {
   const params = useParams<{ id: string }>();
+  const {
+    address,
+    config,
+    connectWallet,
+    error: walletError,
+    isConnecting,
+    isCorrectNetwork,
+    sendTransaction,
+    switchNetwork,
+  } = useWallet();
   const [agent, setAgent] = useState<Agent | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [depositAmount, setDepositAmount] = useState("");
   const [privateKeyInput, setPrivateKeyInput] = useState("");
   const [showPrivateKey, setShowPrivateKey] = useState(false);
   const [isLoadingBalance, setIsLoadingBalance] = useState(false);
-  const [balance, setBalance] = useState<string | null>(null);
+  const [isDepositing, setIsDepositing] = useState(false);
+  const [balance, setBalance] = useState<bigint | null>(null);
   const [balanceError, setBalanceError] = useState<string | null>(null);
+  const [depositError, setDepositError] = useState<string | null>(null);
+  const [depositSuccess, setDepositSuccess] = useState<string | null>(null);
   const [balanceToken, setBalanceToken] = useState<string | null>(null);
+  const [encryptedBalance, setEncryptedBalance] = useState<number[] | null>(null);
+
+  const isValidDepositAmount =
+    /^(?:0|[1-9]\d*)(?:\.\d{0,3})?$/.test(depositAmount) &&
+    Number(depositAmount) > 0;
+  const isPrivateFeaturesUnlocked = !!privateKeyInput.trim() && !!encryptedBalance;
 
   useEffect(() => {
     let cancelled = false;
@@ -129,6 +169,10 @@ export default function AgentDetailsPage() {
     setBalance(null);
     setBalanceError(null);
     setBalanceToken(null);
+    setEncryptedBalance(null);
+    setDepositAmount("");
+    setDepositError(null);
+    setDepositSuccess(null);
   }, [agent]);
 
   useEffect(() => {
@@ -137,58 +181,72 @@ export default function AgentDetailsPage() {
     }
   }, [agent, privateKeyInput]);
 
-  async function handleLoadBalance() {
+  async function loadEncryptedBalance() {
     if (!agent) {
-      return;
-    }
-
-    if (!privateKeyInput.trim()) {
-      setBalanceError("Enter the agent private key to decrypt the on-chain balance.");
-      setBalance(null);
-      return;
+      throw new Error("Agent details are not loaded yet.");
     }
 
     const accessToken = getAccessTokenCookie();
     if (!accessToken) {
-      setBalanceError("You must be signed in to load the balance.");
+      throw new Error("You must be signed in to load the balance.");
+    }
+
+    const response = await fetch(`${API_URL}/api/agents/${agent.id}/balance`, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+      cache: "no-store",
+    });
+
+    const data = (await response.json().catch(() => ({}))) as {
+      success?: boolean;
+      error?: string;
+      balance?: {
+        token: string;
+        encrypted: number[];
+      };
+    };
+
+    if (!response.ok || !data.success || !data.balance) {
+      throw new Error(data.error || "Failed to load the encrypted agent balance.");
+    }
+
+    return data.balance;
+  }
+
+  async function handleLoadBalance() {
+    if (!privateKeyInput.trim()) {
+      setBalanceError("Enter the agent private key to unlock the private on-chain features.");
       setBalance(null);
       return;
     }
 
     setIsLoadingBalance(true);
     setBalanceError(null);
-    setBalance(null);
+    setDepositError(null);
+    setDepositSuccess(null);
 
     try {
-      const response = await fetch(`${API_URL}/api/agents/${agent.id}/balance`, {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
-        cache: "no-store",
-      });
-
-      const data = (await response.json().catch(() => ({}))) as {
-        success?: boolean;
-        error?: string;
-        balance?: {
-          token: string;
-          encrypted: number[];
-        };
-      };
-
-      if (!response.ok || !data.success || !data.balance) {
-        throw new Error(data.error || "Failed to load the encrypted agent balance.");
-      }
-
+      const loadedBalance = await loadEncryptedBalance();
       const decryptedBalance = decryptAgentBalance(
-        data.balance.encrypted,
+        loadedBalance.encrypted,
         privateKeyInput.trim(),
       );
 
-      setBalance(formatTokenAmount(decryptedBalance, 6));
-      setBalanceToken(data.balance.token);
+      console.log("[agent-private] unlocked private features", {
+        agentId: agent?.agentId,
+        token: loadedBalance.token,
+        encryptedBytes: loadedBalance.encrypted.length,
+      });
+
+      setEncryptedBalance(loadedBalance.encrypted);
+      setBalance(decryptedBalance);
+      setBalanceToken(loadedBalance.token);
     } catch (loadBalanceError) {
-      console.error(loadBalanceError);
+      console.error("[agent-private] unlock failed", loadBalanceError);
+      setEncryptedBalance(null);
+      setBalance(null);
+      setBalanceToken(null);
       setBalanceError(
         loadBalanceError instanceof Error
           ? loadBalanceError.message
@@ -196,6 +254,143 @@ export default function AgentDetailsPage() {
       );
     } finally {
       setIsLoadingBalance(false);
+    }
+  }
+
+  async function registerDepositTransaction(txHash: string, token: string, amount: bigint) {
+    try {
+      await fetch(`${API_URL}/api/transaction`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          tx_hash: txHash,
+          type: "DEPOSIT",
+          token,
+          amount: amount.toString(),
+          sender_address: address,
+          receiver_address: address,
+        }),
+      });
+    } catch (registrationError) {
+      console.error("[agent-deposit] transaction registration failed", registrationError);
+    }
+  }
+
+  async function handleDeposit() {
+    if (!agent) {
+      return;
+    }
+
+    setDepositError(null);
+    setDepositSuccess(null);
+
+    if (!privateKeyInput.trim()) {
+      setDepositError("Unlock the private features with the agent private key before depositing.");
+      return;
+    }
+
+    if (!isValidDepositAmount) {
+      setDepositError("Enter a valid positive amount with at most 3 decimals.");
+      return;
+    }
+
+    if (!address) {
+      setDepositError("Connect your wallet before depositing funds.");
+      return;
+    }
+
+    if (!isCorrectNetwork) {
+      try {
+        await switchNetwork();
+      } catch (switchError) {
+        setDepositError(
+          switchError instanceof Error
+            ? switchError.message
+            : "Switch your wallet to Arbitrum Sepolia before depositing.",
+        );
+        return;
+      }
+    }
+
+    setIsDepositing(true);
+
+    try {
+      const unlockedBalance = await loadEncryptedBalance();
+      const proofAmount = convertDisplayAmountToProofAmount(depositAmount);
+      const erc20Amount = convertProofAmountToErc20Amount(proofAmount);
+
+      console.log("[agent-deposit] preparing deposit", {
+        agentId: agent.agentId,
+        controller: address,
+        token: unlockedBalance.token,
+        displayAmount: depositAmount,
+        proofAmount: proofAmount.toString(),
+        erc20Amount: erc20Amount.toString(),
+      });
+
+      const approveCalldata = buildApproveCalldata(
+        config.confidentialErc20Address,
+        erc20Amount,
+      );
+
+      const { txHash: approvalTxHash } = await sendTransaction({
+        to: unlockedBalance.token,
+        data: approveCalldata,
+      });
+
+      console.log("[agent-deposit] approval confirmed", { approvalTxHash });
+
+      const { proof, publicInputs } = await generateAgentDepositProof({
+        agentId: agent.agentId,
+        agentPrivateKey: privateKeyInput.trim(),
+        agentPublicKey: agent.publicKey,
+        currentEncryptedBalance: unlockedBalance.encrypted,
+        token: unlockedBalance.token,
+        amount: proofAmount,
+      });
+
+      console.log("[agent-deposit] proof generated", {
+        publicInputs: publicInputs.length,
+        proofBytes: proof.length,
+      });
+
+      const packedPublicInputs = convertAgentDepositPublicInputs(publicInputs);
+      const depositCalldata = buildDepositCalldata(packedPublicInputs, proof);
+
+      const { txHash } = await sendTransaction({
+        to: config.confidentialErc20Address,
+        data: depositCalldata,
+      });
+
+      console.log("[agent-deposit] deposit confirmed", {
+        txHash,
+        agentId: agent.agentId,
+      });
+
+      await registerDepositTransaction(txHash, unlockedBalance.token, erc20Amount);
+      setDepositAmount("");
+      setDepositSuccess(`Deposit confirmed on-chain: ${txHash}`);
+
+      const refreshedBalance = await loadEncryptedBalance();
+      const decryptedBalance = decryptAgentBalance(
+        refreshedBalance.encrypted,
+        privateKeyInput.trim(),
+      );
+
+      setEncryptedBalance(refreshedBalance.encrypted);
+      setBalance(decryptedBalance);
+      setBalanceToken(refreshedBalance.token);
+    } catch (depositFlowError) {
+      console.error("[agent-deposit] deposit failed", depositFlowError);
+      setDepositError(
+        depositFlowError instanceof Error
+          ? depositFlowError.message
+          : "Could not deposit funds into the agent treasury.",
+      );
+    } finally {
+      setIsDepositing(false);
     }
   }
 
@@ -323,11 +518,14 @@ export default function AgentDetailsPage() {
                   Current decrypted balance
                 </div>
                 <div className="mt-3 text-3xl font-semibold tracking-tight text-white">
-                  {balance ? `${balance} WETH` : "Protected"}
+                  {balance !== null
+                    ? `${formatTokenAmount(balance, AGENT_TOKEN_DECIMALS)} WETH`
+                    : "Protected"}
                 </div>
                 <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-300">
-                  This balance is stored encrypted on-chain. Enter the agent private key here to
-                  decrypt it locally in your browser.
+                  This balance is stored encrypted on-chain. Unlock private features once with the
+                  agent private key to decrypt the balance locally and enable deposits from this
+                  page.
                 </p>
               </div>
 
@@ -357,7 +555,7 @@ export default function AgentDetailsPage() {
                 </div>
                 <p className="text-xs leading-6 text-slate-500">
                   This key stays local to your browser and is only used to decrypt the encrypted
-                  balance.
+                  balance and generate the private deposit proof.
                 </p>
               </div>
 
@@ -379,7 +577,7 @@ export default function AgentDetailsPage() {
                   </div>
                 ) : (
                   <div className="text-sm text-slate-500">
-                    Load the balance to view the on-chain token address.
+                    Unlock the balance to reveal the on-chain token address.
                   </div>
                 )}
 
@@ -390,7 +588,133 @@ export default function AgentDetailsPage() {
                   disabled={isLoadingBalance || !privateKeyInput.trim()}
                   className="sm:self-end"
                 >
-                  {isLoadingBalance ? "Decrypting balance..." : "Load on-chain balance"}
+                  {isLoadingBalance
+                    ? "Unlocking private features..."
+                    : isPrivateFeaturesUnlocked
+                      ? "Refresh balance"
+                      : "Unlock private features"}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="rounded-[1.75rem]">
+            <CardHeader>
+              <div className="flex items-center gap-3">
+                <div className="rounded-2xl border border-white/10 bg-white/5 p-3 text-sky-300">
+                  <Sparkles className="h-5 w-5" />
+                </div>
+                <div>
+                  <CardTitle>Deposit funds</CardTitle>
+                  <p className="mt-1 text-sm text-slate-400">
+                    Set how much WETH you want to deposit into this agent treasury.
+                  </p>
+                </div>
+                </div>
+              </CardHeader>
+            <CardContent className="space-y-4">
+              {!address ? (
+                <div className="rounded-2xl border border-amber-400/30 bg-amber-400/10 p-4 text-sm text-amber-100">
+                  <div className="flex items-start gap-3">
+                    <Wallet className="mt-0.5 h-4 w-4 shrink-0" />
+                    <div className="space-y-3">
+                      <p>Connect your wallet before depositing funds into this agent treasury.</p>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        onClick={() => void connectWallet()}
+                        disabled={isConnecting}
+                      >
+                        {isConnecting ? "Connecting wallet..." : "Connect wallet"}
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+
+              {address && !isCorrectNetwork ? (
+                <div className="rounded-2xl border border-amber-400/30 bg-amber-400/10 p-4 text-sm text-amber-100">
+                  <div className="flex items-start gap-3">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                    <div className="space-y-3">
+                      <p>Switch your wallet to Arbitrum Sepolia before depositing.</p>
+                      <Button type="button" variant="secondary" onClick={() => void switchNetwork()}>
+                        Switch network
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+
+              {!isPrivateFeaturesUnlocked ? (
+                <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-sm text-slate-400">
+                  Unlock private features above with the agent private key before generating a
+                  deposit proof.
+                </div>
+              ) : null}
+
+              <div className="grid gap-2">
+                <Label htmlFor="deposit-amount">Amount to deposit</Label>
+                <Input
+                  id="deposit-amount"
+                  inputMode="decimal"
+                  value={depositAmount}
+                  onChange={(event) => {
+                    const nextValue = event.target.value;
+
+                    if (nextValue === "" || /^(?:0|[1-9]\d*)(?:\.\d{0,3})?$/.test(nextValue)) {
+                      setDepositAmount(nextValue);
+                    }
+                  }}
+                  placeholder="0.10"
+                />
+                <p className="text-xs leading-6 text-slate-500">
+                  Accepts positive WETH amounts with up to 3 decimals, for example `0.125` or
+                  `12.500`.
+                </p>
+              </div>
+
+              {!depositAmount || isValidDepositAmount ? null : (
+                <div className="rounded-2xl border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-200">
+                  Enter a valid positive amount with at most 3 decimals.
+                </div>
+              )}
+
+              {walletError ? (
+                <div className="rounded-2xl border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-200">
+                  {walletError}
+                </div>
+              ) : null}
+
+              {depositError ? (
+                <div className="rounded-2xl border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-200">
+                  {depositError}
+                </div>
+              ) : null}
+
+              {depositSuccess ? (
+                <div className="rounded-2xl border border-emerald-400/30 bg-emerald-400/10 p-4 text-sm text-emerald-100">
+                  {depositSuccess}
+                </div>
+              ) : null}
+
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                <div className="text-sm text-slate-400">
+                  This funds the encrypted agent treasury with WETH by approving the ERC-20 transfer
+                  first and then submitting a private deposit proof on-chain.
+                </div>
+                <Button
+                  type="button"
+                  onClick={() => void handleDeposit()}
+                  disabled={
+                    !isValidDepositAmount ||
+                    !address ||
+                    !isCorrectNetwork ||
+                    !isPrivateFeaturesUnlocked ||
+                    isDepositing
+                  }
+                >
+                  {isDepositing ? "Depositing..." : "Deposit"}
                 </Button>
               </div>
             </CardContent>

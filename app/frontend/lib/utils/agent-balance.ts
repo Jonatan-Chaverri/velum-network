@@ -1,4 +1,4 @@
-import * as curveWasm from "../../../../old-app/frontend/node_modules/confidential-transfers/baby-giant";
+import * as curveWasm from "confidential-transfers/baby-giant";
 
 type CipherPoint = {
   x: bigint;

@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { WalletProvider } from "@/components/providers/wallet-provider";
 
 import "./globals.css";
+import "./polyfills";
 
 export const metadata: Metadata = {
   title: "Velum Network",

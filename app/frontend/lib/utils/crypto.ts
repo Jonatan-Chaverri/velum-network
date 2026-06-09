@@ -1,4 +1,4 @@
-import { GrumpkinScalar, Schnorr } from "../../../../old-app/frontend/node_modules/@aztec/aztec.js/dest/index.js";
+import { GrumpkinScalar, Schnorr } from "@aztec/aztec.js";
 
 export type AgentKeyPair = {
   privateKey: string;
