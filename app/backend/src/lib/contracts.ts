@@ -13,3 +13,11 @@ export function getConfidentialErc20Address(): string {
   }
   return address;
 }
+
+export function getWethTokenAddress(): string {
+  const address = process.env.WETH_TOKEN_ADDRESS;
+  if (!address) {
+    throw new Error('WETH_TOKEN_ADDRESS environment variable is not set');
+  }
+  return address;
+}

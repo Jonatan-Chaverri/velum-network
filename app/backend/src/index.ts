@@ -42,7 +42,13 @@ app.get('/health', (req, res) => {
 
 // Error handling middleware
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
-  console.error('Error:', err);
+  console.error('[api.error]', {
+    method: req.method,
+    path: req.originalUrl,
+    message: err?.message ?? 'Unknown error',
+    stack: err?.stack,
+    error: err,
+  });
   res.status(err.status || 500).json({
     error: err.message || 'Internal server error',
   });

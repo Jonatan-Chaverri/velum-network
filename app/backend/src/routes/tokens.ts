@@ -1,12 +1,11 @@
 import express from 'express';
-import { ContractService } from '../db/services/contractService';
+import { getWethTokenAddress } from '../lib/contracts';
 
 const router = express.Router();
 
 /**
  * GET /api/tokens
- * Get contract with name='WETH_TOKEN_ADDRESS' from contracts table
- * Returns the contract in the specified format
+ * Returns token addresses from environment configuration
  */
 router.get('/', async (req, res, next) => {
   try {
@@ -17,24 +16,14 @@ router.get('/', async (req, res, next) => {
       });
     }
 
-    const contract = await ContractService.getContractByNameAndNetwork(
-      'WETH_TOKEN_ADDRESS',
-      network
-    );
+    const wethTokenAddress = getWethTokenAddress();
 
-    if (!contract) {
-      return res.status(404).json({
-        error: `Contract with name WETH_TOKEN_ADDRESS and network ${network} not found`,
-      });
-    }
-
-    // Return in the specified format
     res.json({
       tokens: [
         {
-          name: contract.name,
-          network: contract.network,
-          address: contract.address,
+          name: 'WETH_TOKEN_ADDRESS',
+          network,
+          address: wethTokenAddress,
         },
       ],
     });
@@ -44,4 +33,3 @@ router.get('/', async (req, res, next) => {
 });
 
 export default router;
-

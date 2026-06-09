@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 
+import { WalletProvider } from "@/components/providers/wallet-provider";
+
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -14,7 +16,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="dark">
-      <body className="font-sans">{children}</body>
+      <body className="font-sans">
+        <WalletProvider>{children}</WalletProvider>
+      </body>
     </html>
   );
 }

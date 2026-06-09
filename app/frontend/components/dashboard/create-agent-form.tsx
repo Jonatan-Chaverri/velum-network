@@ -1,9 +1,10 @@
 "use client";
 
-import { CheckCircle2, ChevronDown } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ChevronDown, Wallet } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { FormEvent, ReactNode, useState } from "react";
 
+import { useWallet } from "@/components/providers/wallet-provider";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -48,6 +49,13 @@ type FormState = {
 };
 
 type FormErrors = Partial<Record<keyof FormState, string>>;
+
+type PreparedRegistration = {
+  agentId: string;
+  publicKey: string;
+  privateKey: string;
+  txHash?: string;
+};
 
 const initialForm: FormState = {
   name: "",
@@ -108,6 +116,15 @@ function SelectField({
 
 export function CreateAgentForm() {
   const router = useRouter();
+  const {
+    address,
+    connectWallet,
+    error: walletError,
+    isConnecting,
+    isCorrectNetwork,
+    sendTransaction,
+    switchNetwork,
+  } = useWallet();
   const [form, setForm] = useState<FormState>(initialForm);
   const [errors, setErrors] = useState<FormErrors>({});
   const [requestError, setRequestError] = useState<string | null>(null);
@@ -115,6 +132,9 @@ export function CreateAgentForm() {
   const [success, setSuccess] = useState<string | null>(null);
   const [generatedPrivateKey, setGeneratedPrivateKey] = useState<string | null>(null);
   const [privateKeyCopied, setPrivateKeyCopied] = useState(false);
+  const [preparedRegistration, setPreparedRegistration] = useState<PreparedRegistration | null>(
+    null,
+  );
 
   const billingUnit = form.priceModel === "per response" ? "response" : "month";
 
@@ -177,11 +197,83 @@ export function CreateAgentForm() {
       return;
     }
 
+    if (!address) {
+      setRequestError("Connect your MetaMask wallet before creating an agent.");
+      setSuccess(null);
+      return;
+    }
+
+    if (!isCorrectNetwork) {
+      setRequestError("Switch your wallet to Arbitrum Sepolia before creating an agent.");
+      setSuccess(null);
+      return;
+    }
+
     setIsSubmitting(true);
     setRequestError(null);
+    setSuccess(null);
+
+    let registration = preparedRegistration;
 
     try {
-      const keyPair = await generateAgentKeyPair();
+      if (!registration) {
+        const keyPair = await generateAgentKeyPair();
+        const serializedPublicKey = serializePublicKey(keyPair.publicKey);
+
+        console.log("[agent-create] preparing agent registration", {
+          address,
+          sellsServices: form.sellsServices,
+          category: form.category,
+        });
+
+        const prepareResponse = await fetch(`${API_URL}/api/agents/prepare`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({
+            publicKey: serializedPublicKey,
+          }),
+        });
+
+        const preparePayload = (await prepareResponse.json()) as {
+          error?: string;
+          agentId?: string;
+          transaction?: {
+            to: string;
+            data: string;
+          };
+        };
+
+        if (!prepareResponse.ok || !preparePayload.agentId || !preparePayload.transaction) {
+          throw new Error(preparePayload.error || "Could not prepare the on-chain agent deploy.");
+        }
+
+        console.log("[agent-create] prepared on backend", {
+          agentId: preparePayload.agentId,
+          contract: preparePayload.transaction.to,
+        });
+
+        const { txHash } = await sendTransaction(preparePayload.transaction);
+
+        registration = {
+          agentId: preparePayload.agentId,
+          publicKey: serializedPublicKey,
+          privateKey: keyPair.privateKey,
+          txHash,
+        };
+        setPreparedRegistration(registration);
+        console.log("[agent-create] on-chain registration confirmed", {
+          agentId: registration.agentId,
+          txHash,
+        });
+      }
+
+      console.log("[agent-create] persisting agent metadata", {
+        agentId: registration.agentId,
+        txHash: registration.txHash ?? null,
+      });
 
       const response = await fetch(`${API_URL}/api/agents`, {
         method: "POST",
@@ -190,11 +282,12 @@ export function CreateAgentForm() {
           Authorization: `Bearer ${accessToken}`,
         },
         body: JSON.stringify({
+          agentId: registration.agentId,
           name: form.name.trim(),
           description: form.description.trim(),
           category: form.category,
           sellsServices: form.sellsServices,
-          publicKey: serializePublicKey(keyPair.publicKey),
+          publicKey: registration.publicKey,
           service: form.sellsServices
             ? {
                 price: form.price.trim(),
@@ -214,15 +307,36 @@ export function CreateAgentForm() {
         throw new Error(data.error || "Could not create agent workspace.");
       }
 
-      // Show the private key to the user once. The backend never stores it.
-      setGeneratedPrivateKey(keyPair.privateKey);
+      console.log("[agent-create] agent persisted successfully", {
+        agentId: registration.agentId,
+        txHash: registration.txHash ?? null,
+      });
+      setGeneratedPrivateKey(registration.privateKey);
       setPrivateKeyCopied(false);
+      setPreparedRegistration(null);
+      setSuccess("Agent deployed on-chain and saved in Velum.");
     } catch (submissionError) {
-      setRequestError(
-        submissionError instanceof Error
-          ? submissionError.message
-          : "Could not create agent workspace.",
-      );
+      const fallbackMessage = "Could not create agent workspace.";
+      const message =
+        submissionError instanceof Error ? submissionError.message : fallbackMessage;
+
+      if (registration) {
+        console.error("[agent-create] failed after on-chain registration", {
+          agentId: registration.agentId,
+          txHash: registration.txHash ?? null,
+          error: submissionError,
+        });
+        setRequestError(
+          `${message} The on-chain agent registration may already have succeeded${
+            registration.txHash ? ` (tx: ${registration.txHash})` : ""
+          }, so you can retry and Velum will only save the remaining backend metadata.`,
+        );
+      } else {
+        console.error("[agent-create] failed before backend persistence", {
+          error: submissionError,
+        });
+        setRequestError(message);
+      }
       setSuccess(null);
     } finally {
       setIsSubmitting(false);
@@ -477,22 +591,58 @@ export function CreateAgentForm() {
           <CardTitle>Ready to create</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
+          {!address || !isCorrectNetwork ? (
+            <div className="rounded-2xl border border-amber-400/30 bg-amber-500/10 p-4 text-sm text-amber-100">
+              <div className="flex items-center gap-2 font-medium">
+                <AlertTriangle className="h-4 w-4" />
+                Wallet approval is required
+              </div>
+              <p className="mt-2 text-amber-50/80">
+                The new agent must be registered on-chain from your wallet so you become its
+                controller. Connect MetaMask and use Arbitrum Sepolia before submitting.
+              </p>
+              <div className="mt-4 flex flex-wrap gap-3">
+                {!address ? (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={connectWallet}
+                    disabled={isConnecting}
+                  >
+                    <Wallet className="mr-2 h-4 w-4" />
+                    {isConnecting ? "Connecting..." : "Connect Wallet"}
+                  </Button>
+                ) : (
+                  <Button type="button" variant="secondary" onClick={switchNetwork}>
+                    Switch to Arbitrum Sepolia
+                  </Button>
+                )}
+              </div>
+              {walletError ? <p className="mt-3 text-xs text-amber-200">{walletError}</p> : null}
+            </div>
+          ) : null}
+
           <div className="rounded-2xl border border-emerald-400/20 bg-emerald-400/10 p-4 text-sm text-emerald-100">
             <div className="flex items-center gap-2 font-medium">
               <CheckCircle2 className="h-4 w-4" />
-              Secure workspace provisioning stays automatic
+              Wallet-controlled deployment, backend-managed workspace
             </div>
             <p className="mt-2 text-emerald-50/80">
-              Velum can still provision the agent workspace and credentials behind the
-              scenes once the configuration is complete.
+              Velum still provisions the workspace and metadata automatically, but the
+              registration transaction is now signed directly by your wallet so you remain
+              the controller of the agent on-chain.
             </p>
           </div>
 
           {requestError ? <p className="text-sm text-rose-300">{requestError}</p> : null}
           {success ? <p className="text-sm text-emerald-300">{success}</p> : null}
 
-          <Button type="submit" disabled={isSubmitting}>
-            {isSubmitting ? "Creating agent workspace..." : "Create agent workspace"}
+          <Button type="submit" disabled={isSubmitting || !address || !isCorrectNetwork}>
+            {isSubmitting
+              ? preparedRegistration
+                ? "Saving agent metadata..."
+                : "Waiting for wallet confirmation..."
+              : "Create agent workspace"}
           </Button>
         </CardContent>
       </Card>

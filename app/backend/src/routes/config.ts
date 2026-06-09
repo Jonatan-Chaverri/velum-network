@@ -11,6 +11,7 @@ const router = express.Router();
 router.get('/', async (req, res, next) => {
   try {
     const rpcUrl = process.env.RPC_URL;
+    const chainId = 421614;
 
     if (!rpcUrl) {
       return res.status(500).json({
@@ -23,6 +24,7 @@ router.get('/', async (req, res, next) => {
     res.json({
       success: true,
       config: {
+        chain_id: chainId,
         rpc_url: rpcUrl,
         confidential_erc20: confidentialErc20Address,
       },
@@ -33,4 +35,3 @@ router.get('/', async (req, res, next) => {
 });
 
 export default router;
-

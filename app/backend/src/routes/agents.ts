@@ -4,12 +4,19 @@ import jwt from 'jsonwebtoken';
 
 import { AuthRepository } from '../auth/repositories/authRepository';
 import { TokenPayload } from '../auth/utils/tokens';
-import { registerAgentPublicKeyOnChain } from '../lib/agentRegistration';
+import { buildRegisterAgentTransaction } from '../lib/agentRegistration';
+import { getConfidentialErc20Address, getWethTokenAddress } from '../lib/contracts';
 import { prisma } from '../lib/prisma';
 
+const { decodeFunctionResult, encodeFunctionData, parseAbi } = require('viem');
+
 const router = express.Router();
+const confidentialErc20ReadAbi = parseAbi([
+  'function balanceOfEnc(address token, uint32 agent_id) view returns (uint8[128])',
+]);
 
 type CreateAgentBody = {
+  agentId?: string | number;
   name?: string;
   description?: string;
   category?: string;
@@ -23,6 +30,10 @@ type CreateAgentBody = {
     endpointUrl?: string;
     status?: 'visible' | 'hidden';
   };
+};
+
+type PrepareAgentBody = {
+  publicKey?: string;
 };
 
 if (!process.env.JWT_SECRET) {
@@ -242,6 +253,141 @@ router.get('/:id', async (req, res, next) => {
   }
 });
 
+router.get('/:id/balance', async (req, res, next) => {
+  try {
+    const userId = await getAuthenticatedUserId(req, res);
+
+    if (!userId) {
+      return;
+    }
+
+    const rpcUrl = process.env.RPC_URL;
+    if (!rpcUrl) {
+      return res.status(500).json({ error: 'RPC_URL environment variable is not set' });
+    }
+
+    const agent = await prisma.agent.findFirst({
+      where: {
+        id: req.params.id,
+        userId,
+      },
+      select: {
+        id: true,
+        agentId: true,
+      },
+    });
+
+    if (!agent) {
+      return res.status(404).json({ error: 'Agent not found' });
+    }
+
+    const confidentialErc20Address = getConfidentialErc20Address() as `0x${string}`;
+    const wethTokenAddress = getWethTokenAddress() as `0x${string}`;
+
+    const data = encodeFunctionData({
+      abi: confidentialErc20ReadAbi,
+      functionName: 'balanceOfEnc',
+      args: [wethTokenAddress, Number(agent.agentId)],
+    });
+
+    const rpcResponse = await fetch(rpcUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'eth_call',
+        params: [
+          {
+            to: confidentialErc20Address,
+            data,
+          },
+          'latest',
+        ],
+      }),
+    });
+
+    const rpcPayload = await rpcResponse.json() as {
+      result?: `0x${string}`;
+      error?: { message?: string };
+    };
+
+    if (!rpcResponse.ok || rpcPayload.error || !rpcPayload.result) {
+      throw new Error(rpcPayload.error?.message || 'Failed to read encrypted balance on-chain');
+    }
+
+    const balance = decodeFunctionResult({
+      abi: confidentialErc20ReadAbi,
+      functionName: 'balanceOfEnc',
+      data: rpcPayload.result,
+    });
+
+    return res.status(200).json({
+      success: true,
+      balance: {
+        token: wethTokenAddress,
+        network: process.env.NETWORK ?? 'SEPOLIA',
+        encrypted: Array.from(balance as readonly bigint[], (value) => Number(value)),
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/prepare', async (req, res, next) => {
+  try {
+    const userId = await getAuthenticatedUserId(req, res);
+
+    if (!userId) {
+      return;
+    }
+
+    const { publicKey }: PrepareAgentBody = req.body;
+
+    if (!publicKey?.trim()) {
+      return res.status(400).json({
+        error: 'publicKey is required',
+      });
+    }
+
+    console.log('[agents.prepare] start', {
+      userId,
+      publicKeyLength: publicKey.trim().length,
+    });
+
+    const [result] = await prisma.$queryRaw<Array<{ nextval: bigint }>>`
+      SELECT nextval(pg_get_serial_sequence('agents', 'agent_id'))::bigint AS nextval
+    `;
+
+    if (!result?.nextval) {
+      throw new Error('Could not reserve the next on-chain agent id');
+    }
+
+    const transaction = buildRegisterAgentTransaction({
+      publicKey: publicKey.trim(),
+      agentId: result.nextval,
+    });
+
+    console.log('[agents.prepare] prepared', {
+      userId,
+      agentId: result.nextval.toString(),
+      to: transaction.to,
+      dataLength: transaction.data.length,
+    });
+
+    return res.status(200).json({
+      success: true,
+      agentId: result.nextval.toString(),
+      transaction,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.post('/', async (req, res, next) => {
   try {
     const userId = await getAuthenticatedUserId(req, res);
@@ -250,7 +396,14 @@ router.post('/', async (req, res, next) => {
       return;
     }
 
-    const { name, description, category, sellsServices, publicKey, service }: CreateAgentBody = req.body;
+    const { agentId, name, description, category, sellsServices, publicKey, service }: CreateAgentBody =
+      req.body;
+
+    if (agentId === undefined || agentId === null || `${agentId}`.trim() === '') {
+      return res.status(400).json({
+        error: 'agentId is required',
+      });
+    }
 
     if (!name?.trim() || !description?.trim() || !category?.trim()) {
       return res.status(400).json({
@@ -308,9 +461,34 @@ router.post('/', async (req, res, next) => {
       }
     }
 
+    let parsedAgentId: bigint;
+
+    try {
+      parsedAgentId = BigInt(agentId);
+    } catch {
+      return res.status(400).json({
+        error: 'agentId must be a valid integer',
+      });
+    }
+
+    if (parsedAgentId <= 0n) {
+      return res.status(400).json({
+        error: 'agentId must be greater than zero',
+      });
+    }
+
+    console.log('[agents.create] start', {
+      userId,
+      agentId: parsedAgentId.toString(),
+      name: name.trim(),
+      category: category.trim(),
+      sellsServices,
+    });
+
     const createdAgent = await prisma.$transaction(async (transaction) => {
       const agent = await transaction.agent.create({
         data: {
+          agentId: parsedAgentId,
           userId,
           title: name.trim(),
           description: description.trim(),
@@ -350,20 +528,12 @@ router.post('/', async (req, res, next) => {
       };
     });
 
-    try {
-      await registerAgentPublicKeyOnChain({
-        publicKey: createdAgent.agent.publicKey,
-        agentId: createdAgent.agent.agentId,
-      });
-    } catch (registrationError) {
-      await prisma.agent.delete({
-        where: {
-          id: createdAgent.agent.id,
-        },
-      });
-
-      throw registrationError;
-    }
+    console.log('[agents.create] persisted', {
+      userId,
+      agentId: createdAgent.agent.agentId.toString(),
+      agentDbId: createdAgent.agent.id,
+      serviceCreated: !!createdAgent.service,
+    });
 
     return res.status(201).json({
       success: true,

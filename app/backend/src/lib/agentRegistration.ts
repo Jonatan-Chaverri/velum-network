@@ -1,10 +1,9 @@
 import { getConfidentialErc20Address } from './contracts';
 
-const { createWalletClient, http, parseAbi } = require('viem');
-const { privateKeyToAccount } = require('viem/accounts');
+const { encodeFunctionData, parseAbi } = require('viem');
 
 const confidentialErc20Abi = parseAbi([
-  'function register_agent_pk(uint8[64] public_key, uint32 agent_id)',
+  'function registerAgentPk(uint8[64] public_key, uint32 agent_id)',
 ]);
 
 function publicKeyHexToBytes(publicKey: string) {
@@ -23,35 +22,19 @@ function publicKeyHexToBytes(publicKey: string) {
   return bytes;
 }
 
-export async function registerAgentPublicKeyOnChain(params: {
+export function buildRegisterAgentTransaction(params: {
   publicKey: string;
   agentId: bigint;
 }) {
-  const rpcUrl = process.env.RPC_URL;
-  const accountPrivateKey = process.env.ACCOUNT_PRIVATE_KEY;
-
-  if (!rpcUrl) {
-    throw new Error('RPC_URL environment variable is not set');
-  }
-
-  if (!accountPrivateKey) {
-    throw new Error('ACCOUNT_PRIVATE_KEY environment variable is not set');
-  }
-
   const contractAddress = getConfidentialErc20Address();
-
-  const account = privateKeyToAccount(accountPrivateKey);
-  const client = createWalletClient({
-    account,
-    transport: http(rpcUrl),
-  });
-
-  const txHash = await client.writeContract({
-    address: contractAddress,
+  const data = encodeFunctionData({
     abi: confidentialErc20Abi,
-    functionName: 'register_agent_pk',
+    functionName: 'registerAgentPk',
     args: [publicKeyHexToBytes(params.publicKey), params.agentId],
   });
 
-  return txHash;
+  return {
+    to: contractAddress,
+    data,
+  };
 }

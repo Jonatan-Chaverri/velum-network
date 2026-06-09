@@ -1,9 +1,11 @@
-import Link from "next/link";
 import { Plus } from "lucide-react";
 
 import { AgentsList } from "@/components/dashboard/agents-list";
+import {
+  AgentsWalletWarning,
+  CreateAgentButton,
+} from "@/components/dashboard/agents-wallet-warning";
 import { DashboardTopbar } from "@/components/dashboard/topbar";
-import { Button } from "@/components/ui/button";
 
 export default function AgentsPage() {
   return (
@@ -12,13 +14,12 @@ export default function AgentsPage() {
         title="Agents"
         description="Provision private treasuries, issue execution credentials, and control how autonomous systems can spend."
       />
+      <AgentsWalletWarning />
       <div className="flex justify-end">
-        <Button asChild>
-          <Link href="/dashboard/agents/new">
-            <Plus className="mr-2 h-4 w-4" />
-            Create Agent
-          </Link>
-        </Button>
+        <div className="flex items-center gap-2">
+          <Plus className="h-4 w-4 text-slate-400" />
+          <CreateAgentButton />
+        </div>
       </div>
       <AgentsList />
     </div>
