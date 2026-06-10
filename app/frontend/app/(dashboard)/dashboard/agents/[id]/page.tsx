@@ -31,10 +31,13 @@ import {
   AGENT_TOKEN_DECIMALS,
   buildApproveCalldata,
   buildDepositCalldata,
+  buildWithdrawCalldata,
   convertAgentDepositPublicInputs,
+  convertAgentWithdrawPublicInputs,
   convertDisplayAmountToProofAmount,
   convertProofAmountToErc20Amount,
   generateAgentDepositProof,
+  generateAgentWithdrawProof,
 } from "@/lib/utils/agent-private-features";
 import {
   getAgentPrivateKey,
@@ -89,20 +92,27 @@ export default function AgentDetailsPage() {
   const [agent, setAgent] = useState<Agent | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [depositAmount, setDepositAmount] = useState("");
+  const [withdrawAmount, setWithdrawAmount] = useState("");
   const [privateKeyInput, setPrivateKeyInput] = useState("");
   const [showPrivateKey, setShowPrivateKey] = useState(false);
   const [isLoadingBalance, setIsLoadingBalance] = useState(false);
   const [isDepositing, setIsDepositing] = useState(false);
+  const [isWithdrawing, setIsWithdrawing] = useState(false);
   const [balance, setBalance] = useState<bigint | null>(null);
   const [balanceError, setBalanceError] = useState<string | null>(null);
   const [depositError, setDepositError] = useState<string | null>(null);
   const [depositSuccess, setDepositSuccess] = useState<string | null>(null);
+  const [withdrawError, setWithdrawError] = useState<string | null>(null);
+  const [withdrawSuccess, setWithdrawSuccess] = useState<string | null>(null);
   const [balanceToken, setBalanceToken] = useState<string | null>(null);
   const [encryptedBalance, setEncryptedBalance] = useState<number[] | null>(null);
 
   const isValidDepositAmount =
     /^(?:0|[1-9]\d*)(?:\.\d{0,3})?$/.test(depositAmount) &&
     Number(depositAmount) > 0;
+  const isValidWithdrawAmount =
+    /^(?:0|[1-9]\d*)(?:\.\d{0,3})?$/.test(withdrawAmount) &&
+    Number(withdrawAmount) > 0;
   const isPrivateFeaturesUnlocked = !!privateKeyInput.trim() && !!encryptedBalance;
 
   useEffect(() => {
@@ -171,8 +181,11 @@ export default function AgentDetailsPage() {
     setBalanceToken(null);
     setEncryptedBalance(null);
     setDepositAmount("");
+    setWithdrawAmount("");
     setDepositError(null);
     setDepositSuccess(null);
+    setWithdrawError(null);
+    setWithdrawSuccess(null);
   }, [agent]);
 
   useEffect(() => {
@@ -279,6 +292,28 @@ export default function AgentDetailsPage() {
     }
   }
 
+  async function registerWithdrawTransaction(txHash: string, token: string, amount: bigint) {
+    try {
+      await fetch(`${API_URL}/api/transaction`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          tx_hash: txHash,
+          type: "WITHDRAW",
+          token,
+          amount: amount.toString(),
+          sender_agent_id: agent?.agentId ?? null,
+          receiver_agent_id: null,
+          associated_wallet: address,
+        }),
+      });
+    } catch (registrationError) {
+      console.error("[agent-withdraw] transaction registration failed", registrationError);
+    }
+  }
+
   async function handleDeposit() {
     if (!agent) {
       return;
@@ -286,6 +321,8 @@ export default function AgentDetailsPage() {
 
     setDepositError(null);
     setDepositSuccess(null);
+    setWithdrawError(null);
+    setWithdrawSuccess(null);
 
     if (!privateKeyInput.trim()) {
       setDepositError("Unlock the private features with the agent private key before depositing.");
@@ -392,6 +429,112 @@ export default function AgentDetailsPage() {
       );
     } finally {
       setIsDepositing(false);
+    }
+  }
+
+  async function handleWithdraw() {
+    if (!agent) {
+      return;
+    }
+
+    setWithdrawError(null);
+    setWithdrawSuccess(null);
+    setDepositError(null);
+    setDepositSuccess(null);
+
+    if (!privateKeyInput.trim()) {
+      setWithdrawError("Unlock the private features with the agent private key before withdrawing.");
+      return;
+    }
+
+    if (!isValidWithdrawAmount) {
+      setWithdrawError("Enter a valid positive amount with at most 3 decimals.");
+      return;
+    }
+
+    if (!address) {
+      setWithdrawError("Connect your wallet before withdrawing funds.");
+      return;
+    }
+
+    if (!isCorrectNetwork) {
+      try {
+        await switchNetwork();
+      } catch (switchError) {
+        setWithdrawError(
+          switchError instanceof Error
+            ? switchError.message
+            : "Switch your wallet to Arbitrum Sepolia before withdrawing.",
+        );
+        return;
+      }
+    }
+
+    setIsWithdrawing(true);
+
+    try {
+      const unlockedBalance = await loadEncryptedBalance();
+      const proofAmount = convertDisplayAmountToProofAmount(withdrawAmount, "Withdraw amount");
+      const erc20Amount = convertProofAmountToErc20Amount(proofAmount);
+
+      console.log("[agent-withdraw] preparing withdraw", {
+        agentId: agent.agentId,
+        controller: address,
+        token: unlockedBalance.token,
+        displayAmount: withdrawAmount,
+        proofAmount: proofAmount.toString(),
+        erc20Amount: erc20Amount.toString(),
+      });
+
+      const { proof, publicInputs } = await generateAgentWithdrawProof({
+        agentId: agent.agentId,
+        agentPrivateKey: privateKeyInput.trim(),
+        agentPublicKey: agent.publicKey,
+        currentEncryptedBalance: unlockedBalance.encrypted,
+        token: unlockedBalance.token,
+        amount: proofAmount,
+      });
+
+      console.log("[agent-withdraw] proof generated", {
+        publicInputs: publicInputs.length,
+        proofBytes: proof.length,
+      });
+
+      const packedPublicInputs = convertAgentWithdrawPublicInputs(publicInputs);
+      const withdrawCalldata = buildWithdrawCalldata(packedPublicInputs, proof);
+
+      const { txHash } = await sendTransaction({
+        to: config.confidentialErc20Address,
+        data: withdrawCalldata,
+      });
+
+      console.log("[agent-withdraw] withdraw confirmed", {
+        txHash,
+        agentId: agent.agentId,
+      });
+
+      await registerWithdrawTransaction(txHash, unlockedBalance.token, erc20Amount);
+      setWithdrawAmount("");
+      setWithdrawSuccess(`Withdrawal confirmed on-chain: ${txHash}`);
+
+      const refreshedBalance = await loadEncryptedBalance();
+      const decryptedBalance = decryptAgentBalance(
+        refreshedBalance.encrypted,
+        privateKeyInput.trim(),
+      );
+
+      setEncryptedBalance(refreshedBalance.encrypted);
+      setBalance(decryptedBalance);
+      setBalanceToken(refreshedBalance.token);
+    } catch (withdrawFlowError) {
+      console.error("[agent-withdraw] withdraw failed", withdrawFlowError);
+      setWithdrawError(
+        withdrawFlowError instanceof Error
+          ? withdrawFlowError.message
+          : "Could not withdraw funds from the agent treasury.",
+      );
+    } finally {
+      setIsWithdrawing(false);
     }
   }
 
@@ -594,6 +737,128 @@ export default function AgentDetailsPage() {
                     : isPrivateFeaturesUnlocked
                       ? "Refresh balance"
                       : "Unlock private features"}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="rounded-[1.75rem]">
+            <CardHeader>
+              <div className="flex items-center gap-3">
+                <div className="rounded-2xl border border-white/10 bg-white/5 p-3 text-fuchsia-300">
+                  <Globe className="h-5 w-5" />
+                </div>
+                <div>
+                  <CardTitle>Withdraw funds</CardTitle>
+                  <p className="mt-1 text-sm text-slate-400">
+                    Withdraw WETH from this encrypted treasury back to the controller wallet.
+                  </p>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {!address ? (
+                <div className="rounded-2xl border border-amber-400/30 bg-amber-400/10 p-4 text-sm text-amber-100">
+                  <div className="flex items-start gap-3">
+                    <Wallet className="mt-0.5 h-4 w-4 shrink-0" />
+                    <div className="space-y-3">
+                      <p>Connect your wallet before withdrawing funds from this agent treasury.</p>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        onClick={() => void connectWallet()}
+                        disabled={isConnecting}
+                      >
+                        {isConnecting ? "Connecting wallet..." : "Connect wallet"}
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+
+              {address && !isCorrectNetwork ? (
+                <div className="rounded-2xl border border-amber-400/30 bg-amber-400/10 p-4 text-sm text-amber-100">
+                  <div className="flex items-start gap-3">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                    <div className="space-y-3">
+                      <p>Switch your wallet to Arbitrum Sepolia before withdrawing.</p>
+                      <Button type="button" variant="secondary" onClick={() => void switchNetwork()}>
+                        Switch network
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+
+              {!isPrivateFeaturesUnlocked ? (
+                <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-sm text-slate-400">
+                  Unlock private features above with the agent private key before generating a
+                  withdraw proof.
+                </div>
+              ) : null}
+
+              <div className="grid gap-2">
+                <Label htmlFor="withdraw-amount">Amount to withdraw</Label>
+                <Input
+                  id="withdraw-amount"
+                  inputMode="decimal"
+                  value={withdrawAmount}
+                  onChange={(event) => {
+                    const nextValue = event.target.value;
+
+                    if (nextValue === "" || /^(?:0|[1-9]\d*)(?:\.\d{0,3})?$/.test(nextValue)) {
+                      setWithdrawAmount(nextValue);
+                    }
+                  }}
+                  placeholder="0.10"
+                />
+                <p className="text-xs leading-6 text-slate-500">
+                  Uses the same proof amount encoding as deposits and submits the withdrawal proof
+                  with the same wallet gas configuration.
+                </p>
+              </div>
+
+              {!withdrawAmount || isValidWithdrawAmount ? null : (
+                <div className="rounded-2xl border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-200">
+                  Enter a valid positive amount with at most 3 decimals.
+                </div>
+              )}
+
+              {walletError ? (
+                <div className="rounded-2xl border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-200">
+                  {walletError}
+                </div>
+              ) : null}
+
+              {withdrawError ? (
+                <div className="rounded-2xl border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-200">
+                  {withdrawError}
+                </div>
+              ) : null}
+
+              {withdrawSuccess ? (
+                <div className="rounded-2xl border border-emerald-400/30 bg-emerald-400/10 p-4 text-sm text-emerald-100">
+                  {withdrawSuccess}
+                </div>
+              ) : null}
+
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                <div className="text-sm text-slate-400">
+                  This submits a private withdrawal proof on-chain and sends the underlying WETH
+                  back to the connected controller wallet.
+                </div>
+                <Button
+                  type="button"
+                  onClick={() => void handleWithdraw()}
+                  disabled={
+                    !isValidWithdrawAmount ||
+                    !address ||
+                    !isCorrectNetwork ||
+                    !isPrivateFeaturesUnlocked ||
+                    isWithdrawing
+                  }
+                >
+                  {isWithdrawing ? "Withdrawing..." : "Withdraw"}
                 </Button>
               </div>
             </CardContent>
