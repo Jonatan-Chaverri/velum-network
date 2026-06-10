@@ -1,5 +1,6 @@
 import express from 'express';
-import { TransactionService } from '../db/services/transactionService';
+import { Prisma } from '@prisma/client';
+import { prisma } from '../lib/prisma';
 
 const router = express.Router();
 
@@ -12,8 +13,9 @@ interface CreateTransactionRequest {
   type: 'DEPOSIT' | 'WITHDRAW' | 'TRANSFER' | 'deposit' | 'transfer' | 'withdraw';
   token?: string | null;
   amount?: string | null;
-  sender_address?: string | null;
-  receiver_address?: string | null;
+  sender_agent_id?: string | number | null;
+  receiver_agent_id?: string | number | null;
+  associated_wallet?: string | null;
 }
 
 router.post('/', async (req, res, next) => {
@@ -23,8 +25,9 @@ router.post('/', async (req, res, next) => {
       type,
       token,
       amount,
-      sender_address,
-      receiver_address,
+      sender_agent_id,
+      receiver_agent_id,
+      associated_wallet,
     }: CreateTransactionRequest = req.body;
 
     // Validate required fields
@@ -52,45 +55,97 @@ router.post('/', async (req, res, next) => {
 
     // Convert to lowercase for database storage
     const typeLower = typeUpper.toLowerCase() as 'deposit' | 'transfer' | 'withdraw';
+    const normalizedTxHash = tx_hash.toLowerCase();
 
-    // Check if transaction with same tx_hash already exists
-    const existingTransaction = await TransactionService.getTransactionByHash(tx_hash);
-    if (existingTransaction) {
-      return res.status(409).json({
-        error: 'Transaction with this tx_hash already exists',
-        transaction: existingTransaction,
+    // Resolve the on-chain agent identifiers (BigInt `agent_id`) to the
+    // internal Agent UUIDs used as foreign keys on the transaction.
+    const resolveAgentUuid = async (
+      value: string | number | null | undefined,
+      field: string,
+    ): Promise<string | null> => {
+      if (value === null || value === undefined || value === '') {
+        return null;
+      }
+
+      let agentIdBigInt: bigint;
+      try {
+        agentIdBigInt = BigInt(value);
+      } catch {
+        throw { status: 400, message: `Invalid ${field}. Expected a numeric agent id.` };
+      }
+
+      const agent = await prisma.agent.findUnique({
+        where: { agentId: agentIdBigInt },
+        select: { id: true },
       });
+
+      if (!agent) {
+        throw { status: 404, message: `Agent not found for ${field}: ${value}` };
+      }
+
+      return agent.id;
+    };
+
+    let senderAgentUuid: string | null;
+    let receiverAgentUuid: string | null;
+    try {
+      senderAgentUuid = await resolveAgentUuid(sender_agent_id, 'sender_agent_id');
+      receiverAgentUuid = await resolveAgentUuid(receiver_agent_id, 'receiver_agent_id');
+    } catch (resolveError: any) {
+      if (resolveError && typeof resolveError.status === 'number') {
+        return res.status(resolveError.status).json({ error: resolveError.message });
+      }
+      throw resolveError;
     }
 
-    // Transactions are no longer linked to a `contracts` DB row; the on-chain
-    // address is read from CONFIDENTIAL_ERC20_ADDRESS in the environment.
-    const contract_id: string | null = null;
+    let transaction;
 
-    // Create transaction with default status 'pending'
-    const transaction = await TransactionService.createTransaction({
-      tx_hash: tx_hash.toLowerCase(), // Normalize to lowercase
-      type: typeLower,
-      status: 'confirmed', // Default status
-      token: token || null,
-      amount: amount || null,
-      sender_address: sender_address ? sender_address.toLowerCase() : null,
-      receiver_address: receiver_address ? receiver_address.toLowerCase() : null,
-      contract_id: contract_id,
-    });
+    try {
+      transaction = await prisma.transaction.create({
+        data: {
+          txHash: normalizedTxHash,
+          type: typeLower,
+          status: 'confirmed',
+          token: token || null,
+          amount: amount || null,
+          senderAgentId: senderAgentUuid,
+          receiverAgentId: receiverAgentUuid,
+          associatedWallet: associated_wallet ? associated_wallet.toLowerCase() : null,
+        },
+      });
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        const existingTransaction = await prisma.transaction.findUnique({
+          where: {
+            txHash: normalizedTxHash,
+          },
+        });
+
+        return res.status(409).json({
+          error: 'Transaction with this tx_hash already exists',
+          transaction: existingTransaction,
+        });
+      }
+
+      throw error;
+    }
 
     res.status(201).json({
       success: true,
       transaction: {
         id: transaction.id,
-        tx_hash: transaction.tx_hash,
+        tx_hash: transaction.txHash,
         type: transaction.type,
         status: transaction.status,
         token: transaction.token,
         amount: transaction.amount,
-        sender_address: transaction.sender_address,
-        receiver_address: transaction.receiver_address,
-        contract_id: transaction.contract_id,
-        created_at: transaction.created_at,
+        sender_agent_id: transaction.senderAgentId,
+        receiver_agent_id: transaction.receiverAgentId,
+        associated_wallet: transaction.associatedWallet,
+        created_at: transaction.createdAt,
       },
     });
   } catch (error: any) {
@@ -99,4 +154,3 @@ router.post('/', async (req, res, next) => {
 });
 
 export default router;
-

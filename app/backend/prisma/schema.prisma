@@ -31,15 +31,27 @@ enum InvoiceStatus {
   failed
 }
 
+enum TransactionType {
+  deposit
+  transfer
+  withdraw
+}
+
+enum TransactionStatus {
+  pending
+  confirmed
+  failed
+}
+
 model User {
-  id           String               @id @default(uuid()) @db.Uuid
+  id           String    @id @default(uuid()) @db.Uuid
   name         String
-  lastName     String               @map("last_name")
+  lastName     String    @map("last_name")
   organization String?
-  email        String               @unique
+  email        String    @unique
   password     String
-  createdAt    DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt    DateTime             @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
   sessions     Session[]
   agents       Agent[]
 
@@ -60,27 +72,29 @@ model Session {
   updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
   user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  @@unique([accessTokenJti])
   @@index([userId])
   @@index([expiresAt])
   @@index([revokedAt])
-  @@unique([accessTokenJti])
   @@map("sessions")
 }
 
 model Agent {
-  id              String    @id @default(uuid()) @db.Uuid
-  agentId         BigInt    @unique @default(autoincrement()) @map("agent_id")
-  userId          String    @map("user_id") @db.Uuid
-  title           String
-  description     String
-  category        String
-  publicKey       String    @map("public_key")
-  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
-  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  services        Service[]
-  sellerInvoices  Invoice[] @relation("SellerInvoices")
-  buyerInvoices   Invoice[] @relation("BuyerInvoices")
+  id                   String        @id @default(uuid()) @db.Uuid
+  agentId              BigInt        @unique @default(autoincrement()) @map("agent_id")
+  userId               String        @map("user_id") @db.Uuid
+  title                String
+  description          String
+  category             String
+  publicKey            String        @map("public_key")
+  createdAt            DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+  user                 User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  services             Service[]
+  sellerInvoices       Invoice[]     @relation("SellerInvoices")
+  buyerInvoices        Invoice[]     @relation("BuyerInvoices")
+  sentTransactions     Transaction[] @relation("SenderAgentTransactions")
+  receivedTransactions Transaction[] @relation("ReceiverAgentTransactions")
 
   @@index([userId])
   @@map("agents")
@@ -99,17 +113,17 @@ model AgentReputation {
 }
 
 model Service {
-  id           String        @id @default(uuid()) @db.Uuid
-  agentId      String        @map("agent_id") @db.Uuid
-  price        Decimal       @db.Decimal(18, 6)
-  pricingModel PricingModel  @map("pricing_model")
+  id           String           @id @default(uuid()) @db.Uuid
+  agentId      String           @map("agent_id") @db.Uuid
+  price        Decimal          @db.Decimal(18, 6)
+  pricingModel PricingModel     @map("pricing_model")
   currency     String
-  billingUnit  BillingUnit   @map("billing_unit")
-  endpointUrl  String        @map("endpoint_url")
+  billingUnit  BillingUnit      @map("billing_unit")
+  endpointUrl  String           @map("endpoint_url")
   status       ServiceStatus
-  createdAt    DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt    DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
-  agent        Agent         @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  createdAt    DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+  agent        Agent            @relation(fields: [agentId], references: [id], onDelete: Cascade)
   reputation   AgentReputation?
 
   @@index([agentId])
@@ -134,4 +148,26 @@ model Invoice {
   @@index([buyerAgentId])
   @@index([status])
   @@map("invoices")
+}
+
+model Transaction {
+  id               String            @id @default(uuid()) @db.Uuid
+  txHash           String            @unique @map("tx_hash")
+  type             TransactionType
+  status           TransactionStatus
+  token            String?
+  amount           String?
+  senderAgentId    String?           @map("sender_agent_id") @db.Uuid
+  receiverAgentId  String?           @map("receiver_agent_id") @db.Uuid
+  associatedWallet String?           @map("associated_wallet")
+  createdAt        DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  senderAgent      Agent?            @relation("SenderAgentTransactions", fields: [senderAgentId], references: [id], onDelete: SetNull)
+  receiverAgent    Agent?            @relation("ReceiverAgentTransactions", fields: [receiverAgentId], references: [id], onDelete: SetNull)
+
+  @@index([type])
+  @@index([status])
+  @@index([senderAgentId])
+  @@index([receiverAgentId])
+  @@index([createdAt])
+  @@map("transactions")
 }

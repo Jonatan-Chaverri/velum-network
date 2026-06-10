@@ -269,8 +269,9 @@ export default function AgentDetailsPage() {
           type: "DEPOSIT",
           token,
           amount: amount.toString(),
-          sender_address: address,
-          receiver_address: address,
+          sender_agent_id: null,
+          receiver_agent_id: agent?.agentId ?? null,
+          associated_wallet: address,
         }),
       });
     } catch (registrationError) {
