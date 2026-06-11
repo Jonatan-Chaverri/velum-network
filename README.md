@@ -133,14 +133,16 @@ We're explicit about what's production-grade today versus what's next — sharp 
 - Confidential transfers and encrypted balances work end-to-end, verified against deployed on-chain verifiers and settled by the Stylus custody contract.
 - Transfer settlement currently runs through an owner/relayer that submits proven transfers. The **privacy** is enforced by the circuits regardless, but the **liveness/ordering** path is not yet trust-minimized.
 - Settlement amounts are recorded **off-chain** in the platform backend — by design, for auditability and regulatory compliance (see *Confidential ≠ unaccountable* above). On-chain observers learn nothing.
-- Transfer amounts use 40-bit range proofs (sufficient for the demo's value range).
+- **Solvency is proven in-circuit**: every transfer and withdrawal proves — without revealing either number — that the sender's decrypted balance covers the amount. Overdrafts and minting credit out of thin air are rejected by the verifier, not by trust.
+- Amounts use 40-bit range proofs (sufficient for the demo's value range).
 - Proof verification runs in auto-generated UltraHonk Solidity verifiers, called by the Stylus contract.
+- **Every agent gets a real ERC-8004 identity**: on creation, agents are automatically registered in the ERC-8004 IdentityRegistry — the official reference implementation, which we deployed on Arbitrum Sepolia because the canonical registry isn't there yet (see the note under *Deployed contracts*). The identity NFT's `tokenURI` resolves to the agent's public card served by the platform, and the agent profile links straight to the on-chain identity.
 
 **Next**
 - **Verification inside Stylus** — port UltraHonk verification from the generated Solidity into the Rust/WASM contract itself, where the compute-heavy work belongs.
 - **Non-custodial settlement** — move from owner-submitted to permissionless / account-abstraction relayers so no operator sits in the transfer path.
 - **Viewing keys** — replace the operational audit record with cryptographic, per-agent auditor access.
-- **ERC-8004 integration** — map each Velum agent identity to its on-chain ERC-8004 reputation so buyers can evaluate sellers without exposing transaction values.
+- **ERC-8004 reputation & validation** — identity registration is live; next, wire the Reputation and Validation registries so buyers can evaluate sellers without exposing transaction values.
 - **ERC-7984 / x402 interop** — bridge to public rails so teams can mix public and confidential settlement on the same infrastructure.
 - **Wider range proofs** and audited circuits before mainnet value.
 - **Multi-chain** — because verification is ZK and EVM-portable, the same verifier can deploy across Arbitrum Orbit chains and other EVMs.
@@ -164,10 +166,13 @@ That split is also the opportunity: verifying an UltraHonk proof is exactly the 
 | Contract | Address |
 |---|---|
 | ConfidentialERC20 (Stylus custody) | [`0x46f6d50fbda4ff5f6d83666792d4ce47718147ab`](https://sepolia.arbiscan.io/address/0x46f6d50fbda4ff5f6d83666792d4ce47718147ab) |
+| ERC-8004 IdentityRegistry (official reference impl, our deployment) | [`0xCf0C9f0Bfd29B73c85351b61b5a758ba1E1ea2D9`](https://sepolia.arbiscan.io/address/0xCf0C9f0Bfd29B73c85351b61b5a758ba1E1ea2D9) |
 | Deposit verifier (UltraHonk) | [`0x1348201d4382f8c8Da6Cb2eC485f6851669BF61d`](https://sepolia.arbiscan.io/address/0x1348201d4382f8c8Da6Cb2eC485f6851669BF61d) |
-| Withdraw verifier (UltraHonk) | [`0x69EAb07F0E9ada7350169eE51aDaC3Fb2Df8f611`](https://sepolia.arbiscan.io/address/0x69EAb07F0E9ada7350169eE51aDaC3Fb2Df8f611) |
-| Transfer verifier (UltraHonk) | [`0x529b64562764D16096B5bA1Be3677C09dF6Fcf2A`](https://sepolia.arbiscan.io/address/0x529b64562764D16096B5bA1Be3677C09dF6Fcf2A) |
+| Withdraw verifier (UltraHonk) | [`0xd3C931d97C38A0DAA7Ee699aC89922017b7f4447`](https://sepolia.arbiscan.io/address/0xd3C931d97C38A0DAA7Ee699aC89922017b7f4447) |
+| Transfer verifier (UltraHonk) | [`0x8803ECDEAe2b61cabfaa74f6917542318D548394`](https://sepolia.arbiscan.io/address/0x8803ECDEAe2b61cabfaa74f6917542318D548394) |
 | WETH (demo token) | [`0x2836ae2ea2c013acd38028fd0c77b92cccfa2ee4`](https://sepolia.arbiscan.io/address/0x2836ae2ea2c013acd38028fd0c77b92cccfa2ee4) |
+
+> **Note on the ERC-8004 registry:** the 8004 team's canonical testnet deployment (`0x7177...d09A` on Ethereum Sepolia, Base Sepolia, Linea Sepolia, …) does not exist on Arbitrum Sepolia. So we deployed the [official reference implementation](https://github.com/erc-8004/erc-8004-contracts) ourselves — unmodified contracts behind a UUPS proxy, plus a ~15-line bootstrap initializer (their deploy pipeline hardcodes the 8004 team's owner address; see [`contracts/verifier/contracts/erc8004/`](contracts/verifier/contracts/erc8004/)). When a canonical registry lands on Arbitrum, Velum can re-register agents there with no code changes — it's the same interface.
 
 ### Run it locally
 

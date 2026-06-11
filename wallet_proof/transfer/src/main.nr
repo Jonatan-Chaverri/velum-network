@@ -46,6 +46,7 @@ fn main(
     // Private inputs (secrets not revealed in proof)
     sender_priv_key: Field,
     transfer_amount: Field,          // Amount to transfer (kept private)
+    sender_current_balance: Field,   // Plaintext of sender's current balance (stays private!)
     r_amount_sender: Field,          // Randomness for encrypting transfer amount under sender's key
     r_amount_receiver: Field,        // Randomness for encrypting transfer amount under receiver's key
     sender_agent_id: Field,
@@ -87,10 +88,19 @@ fn main(
     transfer_amount.assert_max_bit_size::<40>();
     sender_agent_id.assert_max_bit_size::<32>();
     receiver_agent_id.assert_max_bit_size::<32>();
+    sender_current_balance.assert_max_bit_size::<40>();
 
     // Verify sender's public key matches their private key
     let computed_sender_pubkey = public_key(sender_priv_key);
     assert(computed_sender_pubkey == sender_pubkey_ec);
+
+    // SOLVENCY CHECK: bind the private plaintext balance to the public on-chain
+    // ciphertext, then require balance >= amount. Without this, homomorphic
+    // subtraction would wrap "negative" and a sender could mint spendable
+    // credit for the receiver out of thin air.
+    let decrypted_sender_balance = decrypt(old_balance_sender_ct, sender_priv_key);
+    verify_embedding(decrypted_sender_balance, sender_current_balance);
+    assert(sender_current_balance as u64 >= transfer_amount as u64);
 
     // Encrypt transfer amount under sender's public key
     let transfer_amount_sender_ct = encrypt(sender_pubkey_ec, transfer_amount, r_amount_sender);
@@ -165,6 +175,7 @@ fn test_transfer_basic() {
     ) = main(
         sender_priv_key,
         transfer_amount,
+        sender_balance,
         r_amount_sender,
         r_amount_receiver,
         sender_agent_id,
@@ -234,6 +245,7 @@ fn test_transfer_to_zero_balance() {
     ) = main(
         sender_priv_key,
         transfer_amount,
+        sender_balance,
         r_amount_sender,
         r_amount_receiver,
         sender_agent_id,
@@ -264,4 +276,70 @@ fn test_transfer_to_zero_balance() {
     verify_embedding(decrypted_receiver_new, 500);
     assert(returned_sender_agent_id == sender_agent_id);
     assert(returned_receiver_agent_id == receiver_agent_id);
+}
+
+#[test(should_fail)]
+fn test_transfer_more_than_balance_fails() {
+    // Sender with 100 tokens tries to transfer 500 - must be rejected
+    let sender_priv_key = 42;
+    let sender_pubkey = public_key(sender_priv_key);
+    let receiver_priv_key = 100;
+    let receiver_pubkey = public_key(receiver_priv_key);
+
+    let sender_balance = 100;
+    let transfer_amount = 500;
+
+    let old_balance_sender_ct = encrypt(sender_pubkey, sender_balance, 111);
+    let old_balance_receiver_ct = encrypt(receiver_pubkey, 0, 333);
+
+    let _ = main(
+        sender_priv_key,
+        transfer_amount,
+        sender_balance,
+        222,
+        444,
+        7,
+        11,
+        Point { x: receiver_pubkey.x, y: receiver_pubkey.y },
+        Point { x: old_balance_receiver_ct.0.x, y: old_balance_receiver_ct.0.y },
+        Point { x: old_balance_receiver_ct.1.x, y: old_balance_receiver_ct.1.y },
+        Point { x: sender_pubkey.x, y: sender_pubkey.y },
+        Point { x: old_balance_sender_ct.0.x, y: old_balance_sender_ct.0.y },
+        Point { x: old_balance_sender_ct.1.x, y: old_balance_sender_ct.1.y },
+        3
+    );
+}
+
+#[test(should_fail)]
+fn test_transfer_lying_about_balance_fails() {
+    // Sender with 100 tokens claims a plaintext balance of 1000 - the embedding
+    // check against the real ciphertext must reject the proof
+    let sender_priv_key = 42;
+    let sender_pubkey = public_key(sender_priv_key);
+    let receiver_priv_key = 100;
+    let receiver_pubkey = public_key(receiver_priv_key);
+
+    let real_balance = 100;
+    let claimed_balance = 1000;
+    let transfer_amount = 500;
+
+    let old_balance_sender_ct = encrypt(sender_pubkey, real_balance, 111);
+    let old_balance_receiver_ct = encrypt(receiver_pubkey, 0, 333);
+
+    let _ = main(
+        sender_priv_key,
+        transfer_amount,
+        claimed_balance,
+        222,
+        444,
+        7,
+        11,
+        Point { x: receiver_pubkey.x, y: receiver_pubkey.y },
+        Point { x: old_balance_receiver_ct.0.x, y: old_balance_receiver_ct.0.y },
+        Point { x: old_balance_receiver_ct.1.x, y: old_balance_receiver_ct.1.y },
+        Point { x: sender_pubkey.x, y: sender_pubkey.y },
+        Point { x: old_balance_sender_ct.0.x, y: old_balance_sender_ct.0.y },
+        Point { x: old_balance_sender_ct.1.x, y: old_balance_sender_ct.1.y },
+        3
+    );
 }

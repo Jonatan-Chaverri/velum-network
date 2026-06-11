@@ -2,6 +2,7 @@ import { ServiceStatus } from '@prisma/client';
 import express from 'express';
 
 import { prisma } from '../lib/prisma';
+import { getErc8004ExplorerUrl } from '../services/erc8004';
 
 const router = express.Router();
 
@@ -29,6 +30,8 @@ router.get('/', async (req, res, next) => {
             description: true,
             category: true,
             publicKey: true,
+            erc8004AgentId: true,
+            erc8004TxHash: true,
             createdAt: true,
             updatedAt: true,
           },
@@ -53,6 +56,13 @@ router.get('/', async (req, res, next) => {
         description: service.agent.description,
         category: service.agent.category,
         publicKey: service.agent.publicKey,
+        erc8004AgentId:
+          service.agent.erc8004AgentId != null ? service.agent.erc8004AgentId.toString() : null,
+        erc8004TxHash: service.agent.erc8004TxHash ?? null,
+        erc8004Url:
+          service.agent.erc8004AgentId != null
+            ? getErc8004ExplorerUrl(service.agent.erc8004AgentId)
+            : null,
         createdAt: service.agent.createdAt,
         updatedAt: service.agent.updatedAt,
         service: {

@@ -1,16 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useParams } from "next/navigation";
 import {
   AlertTriangle,
+  ArrowDownToLine,
+  ArrowUpFromLine,
   Eye,
   EyeOff,
-  Globe,
   KeyRound,
-  Layers3,
-  Shield,
-  Sparkles,
+  LockKeyhole,
+  RefreshCw,
   Wallet,
 } from "lucide-react";
 
@@ -58,23 +58,75 @@ function formatPrice(agent: Agent) {
   return `${agent.service.price} ${agent.service.currency} / ${agent.service.billingUnit}`;
 }
 
-function DetailItem({
+function InfoRow({
   label,
-  value,
+  children,
   mono = false,
 }: {
   label: string;
-  value: string;
+  children: ReactNode;
   mono?: boolean;
 }) {
   return (
-    <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-      <div className="text-xs uppercase tracking-[0.2em] text-slate-500">{label}</div>
-      <div className={mono ? "mt-2 break-all font-mono text-sm text-slate-200" : "mt-2 text-sm text-slate-200"}>
-        {value}
+    <div className="flex flex-col gap-1 border-b border-white/5 py-3 last:border-0 sm:flex-row sm:justify-between sm:gap-6">
+      <div className="shrink-0 pt-0.5 text-xs uppercase tracking-wide text-slate-500 sm:w-36">
+        {label}
+      </div>
+      <div
+        className={
+          mono
+            ? "min-w-0 break-all font-mono text-xs leading-5 text-slate-200 sm:text-right"
+            : "min-w-0 text-sm text-slate-200 sm:text-right"
+        }
+      >
+        {children}
       </div>
     </div>
   );
+}
+
+function WalletGate({
+  address,
+  isConnecting,
+  isCorrectNetwork,
+  onConnect,
+  onSwitchNetwork,
+}: {
+  address: string | null;
+  isConnecting: boolean;
+  isCorrectNetwork: boolean;
+  onConnect: () => void;
+  onSwitchNetwork: () => void;
+}) {
+  if (!address) {
+    return (
+      <div className="flex flex-col gap-3 rounded-2xl border border-amber-400/30 bg-amber-400/10 p-4 text-sm text-amber-100 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-3">
+          <Wallet className="h-4 w-4 shrink-0" />
+          Connect your controller wallet to move funds.
+        </div>
+        <Button type="button" variant="secondary" onClick={onConnect} disabled={isConnecting}>
+          {isConnecting ? "Connecting..." : "Connect wallet"}
+        </Button>
+      </div>
+    );
+  }
+
+  if (!isCorrectNetwork) {
+    return (
+      <div className="flex flex-col gap-3 rounded-2xl border border-amber-400/30 bg-amber-400/10 p-4 text-sm text-amber-100 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-3">
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          Switch your wallet to Arbitrum Sepolia.
+        </div>
+        <Button type="button" variant="secondary" onClick={onSwitchNetwork}>
+          Switch network
+        </Button>
+      </div>
+    );
+  }
+
+  return null;
 }
 
 export default function AgentDetailsPage() {
@@ -486,11 +538,19 @@ export default function AgentDetailsPage() {
         erc20Amount: erc20Amount.toString(),
       });
 
+      // Decrypt the current balance locally: the circuit takes the plaintext as a
+      // private witness and proves balance >= amount without revealing it on-chain.
+      const currentPlainBalance = decryptAgentBalance(
+        unlockedBalance.encrypted,
+        privateKeyInput.trim(),
+      );
+
       const { proof, publicInputs } = await generateAgentWithdrawProof({
         agentId: agent.agentId,
         agentPrivateKey: privateKeyInput.trim(),
         agentPublicKey: agent.publicKey,
         currentEncryptedBalance: unlockedBalance.encrypted,
+        currentBalance: currentPlainBalance,
         token: unlockedBalance.token,
         amount: proofAmount,
       });
@@ -572,116 +632,78 @@ export default function AgentDetailsPage() {
   }
 
   const priceLabel = formatPrice(agent);
+  const isUnlocked = isPrivateFeaturesUnlocked;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       <DashboardTopbar title={agent.title} description={agent.description} />
 
-      <div className="grid gap-6 xl:grid-cols-3">
-        <Card className="rounded-[1.75rem]">
-          <CardHeader className="pb-3">
+      {/* ── Confidential treasury: the primary surface of this page ── */}
+      <Card className="rounded-[1.75rem]">
+        <CardHeader className="border-b border-white/5">
+          <div className="flex flex-wrap items-center justify-between gap-4">
             <div className="flex items-center gap-3">
               <div className="rounded-2xl border border-white/10 bg-white/5 p-3 text-sky-300">
-                <Layers3 className="h-5 w-5" />
+                <LockKeyhole className="h-5 w-5" />
               </div>
-              <CardTitle className="text-base">Agent identity</CardTitle>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <DetailItem label="On-chain agent id" value={agent.agentId} />
-            <DetailItem label="Category" value={agent.category} />
-            <DetailItem label="Public key" value={agent.publicKey} mono />
-          </CardContent>
-        </Card>
-
-        <Card className="rounded-[1.75rem]">
-          <CardHeader className="pb-3">
-            <div className="flex items-center gap-3">
-              <div className="rounded-2xl border border-white/10 bg-white/5 p-3 text-fuchsia-300">
-                <KeyRound className="h-5 w-5" />
-              </div>
-              <CardTitle className="text-base">Lifecycle</CardTitle>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <DetailItem label="Created at" value={formatDate(agent.createdAt)} />
-            <DetailItem label="Updated at" value={formatDate(agent.updatedAt)} />
-          </CardContent>
-        </Card>
-
-        <Card className="rounded-[1.75rem]">
-          <CardHeader className="pb-3">
-            <div className="flex items-center gap-3">
-              <div className="rounded-2xl border border-white/10 bg-white/5 p-3 text-emerald-300">
-                <Sparkles className="h-5 w-5" />
-              </div>
-              <CardTitle className="text-base">Commercial status</CardTitle>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-              <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
-                Service availability
-              </div>
-              <div className="mt-3">
-                {agent.service ? (
-                  <Badge className="border-emerald-400/30 bg-emerald-400/10 text-emerald-200">
-                    Selling services
-                  </Badge>
-                ) : (
-                  <Badge className="border-white/10 bg-white/5 text-slate-300">
-                    Internal only
-                  </Badge>
-                )}
-              </div>
-            </div>
-            {priceLabel ? <DetailItem label="Price" value={priceLabel} /> : null}
-          </CardContent>
-        </Card>
-      </div>
-
-      <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
-        <div className="space-y-6">
-          <Card className="rounded-[1.75rem]">
-            <CardHeader>
-              <div className="flex items-center gap-3">
-                <div className="rounded-2xl border border-white/10 bg-white/5 p-3 text-amber-300">
-                  <Shield className="h-5 w-5" />
-                </div>
-                <div>
-                  <CardTitle>On-chain balance</CardTitle>
-                  <p className="mt-1 text-sm text-slate-400">
-                    Unlock the encrypted treasury with the agent private key.
-                  </p>
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-5">
-              <div className="rounded-[1.5rem] border border-amber-400/20 bg-[radial-gradient(circle_at_top_left,_rgba(251,191,36,0.18),_transparent_55%),rgba(255,255,255,0.03)] p-5">
-                <div className="text-xs uppercase tracking-[0.2em] text-amber-200/70">
-                  Current decrypted balance
-                </div>
-                <div className="mt-3 text-3xl font-semibold tracking-tight text-white">
-                  {balance !== null
-                    ? `${formatTokenAmount(balance, AGENT_TOKEN_DECIMALS)} WETH`
-                    : "Protected"}
-                </div>
-                <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-300">
-                  This balance is stored encrypted on-chain. Unlock private features once with the
-                  agent private key to decrypt the balance locally and enable deposits from this
-                  page.
+              <div>
+                <CardTitle>Confidential treasury</CardTitle>
+                <p className="mt-1 text-sm text-slate-400">
+                  Balance stored encrypted on-chain — only this agent&apos;s key can read it.
                 </p>
               </div>
+            </div>
+            <div className="flex items-center gap-3">
+              <Badge
+                className={
+                  isUnlocked
+                    ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-200"
+                    : "border-amber-400/30 bg-amber-400/10 text-amber-200"
+                }
+              >
+                {isUnlocked ? "Unlocked" : "Locked"}
+              </Badge>
+              {isUnlocked ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={handleLoadBalance}
+                  disabled={isLoadingBalance}
+                >
+                  <RefreshCw className={isLoadingBalance ? "mr-2 h-3.5 w-3.5 animate-spin" : "mr-2 h-3.5 w-3.5"} />
+                  Refresh
+                </Button>
+              ) : null}
+            </div>
+          </div>
+        </CardHeader>
 
-              <div className="grid gap-2">
-                <Label htmlFor="agent-private-key">Agent private key</Label>
-                <div className="relative">
+        <CardContent className="pt-6">
+          {!isUnlocked ? (
+            /* Unlock gate: one clear action before anything else */
+            <div className="mx-auto max-w-xl py-6 text-center">
+              <div className="mx-auto w-fit rounded-2xl border border-amber-400/20 bg-amber-400/10 p-4 text-amber-200">
+                <KeyRound className="h-7 w-7" />
+              </div>
+              <h3 className="mt-5 text-xl font-semibold text-white">
+                Unlock this agent&apos;s treasury
+              </h3>
+              <p className="mt-2 text-sm leading-6 text-slate-400">
+                Enter the agent&apos;s private key to decrypt the balance and enable deposits
+                and withdrawals. The key{" "}
+                <span className="text-slate-200">never leaves your browser</span> — it&apos;s
+                used locally to decrypt and to generate zero-knowledge proofs.
+              </p>
+
+              <div className="mt-6 flex flex-col gap-3 sm:flex-row">
+                <div className="relative flex-1">
                   <Input
                     id="agent-private-key"
                     type={showPrivateKey ? "text" : "password"}
                     value={privateKeyInput}
                     onChange={(event) => setPrivateKeyInput(event.target.value)}
-                    placeholder="0x..."
+                    placeholder="Agent private key (0x...)"
                     className="pr-11 font-mono text-xs"
                   />
                   <button
@@ -690,17 +712,43 @@ export default function AgentDetailsPage() {
                     className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 transition hover:text-white"
                     aria-label={showPrivateKey ? "Hide private key" : "Show private key"}
                   >
-                    {showPrivateKey ? (
-                      <EyeOff className="h-4 w-4" />
-                    ) : (
-                      <Eye className="h-4 w-4" />
-                    )}
+                    {showPrivateKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                   </button>
                 </div>
-                <p className="text-xs leading-6 text-slate-500">
-                  This key stays local to your browser and is only used to decrypt the encrypted
-                  balance and generate the private deposit proof.
-                </p>
+                <Button
+                  type="button"
+                  onClick={handleLoadBalance}
+                  disabled={isLoadingBalance || !privateKeyInput.trim()}
+                >
+                  {isLoadingBalance ? "Unlocking..." : "Unlock treasury"}
+                </Button>
+              </div>
+
+              {balanceError ? (
+                <div className="mt-4 rounded-2xl border border-rose-500/30 bg-rose-500/10 p-4 text-left text-sm text-rose-200">
+                  {balanceError}
+                </div>
+              ) : null}
+            </div>
+          ) : (
+            <div className="space-y-8">
+              {/* Decrypted balance, front and center */}
+              <div className="flex flex-wrap items-end justify-between gap-4">
+                <div>
+                  <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
+                    Decrypted balance
+                  </div>
+                  <div className="mt-2 text-5xl font-semibold tracking-tight text-white">
+                    {balance !== null ? formatTokenAmount(balance, AGENT_TOKEN_DECIMALS) : "—"}
+                    <span className="ml-3 text-xl font-normal text-slate-400">WETH</span>
+                  </div>
+                </div>
+                {balanceToken ? (
+                  <div className="text-right">
+                    <div className="text-xs uppercase tracking-wide text-slate-500">Token</div>
+                    <div className="mt-1 font-mono text-xs text-slate-400">{balanceToken}</div>
+                  </div>
+                ) : null}
               </div>
 
               {balanceError ? (
@@ -709,120 +757,13 @@ export default function AgentDetailsPage() {
                 </div>
               ) : null}
 
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                {balanceToken ? (
-                  <div className="min-w-0 flex-1 rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-                    <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
-                      Token address
-                    </div>
-                    <div className="mt-2 break-all font-mono text-sm text-slate-200">
-                      {balanceToken}
-                    </div>
-                  </div>
-                ) : (
-                  <div className="text-sm text-slate-500">
-                    Unlock the balance to reveal the on-chain token address.
-                  </div>
-                )}
-
-                <Button
-                  type="button"
-                  variant="secondary"
-                  onClick={handleLoadBalance}
-                  disabled={isLoadingBalance || !privateKeyInput.trim()}
-                  className="sm:self-end"
-                >
-                  {isLoadingBalance
-                    ? "Unlocking private features..."
-                    : isPrivateFeaturesUnlocked
-                      ? "Refresh balance"
-                      : "Unlock private features"}
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="rounded-[1.75rem]">
-            <CardHeader>
-              <div className="flex items-center gap-3">
-                <div className="rounded-2xl border border-white/10 bg-white/5 p-3 text-fuchsia-300">
-                  <Globe className="h-5 w-5" />
-                </div>
-                <div>
-                  <CardTitle>Withdraw funds</CardTitle>
-                  <p className="mt-1 text-sm text-slate-400">
-                    Withdraw WETH from this encrypted treasury back to the controller wallet.
-                  </p>
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {!address ? (
-                <div className="rounded-2xl border border-amber-400/30 bg-amber-400/10 p-4 text-sm text-amber-100">
-                  <div className="flex items-start gap-3">
-                    <Wallet className="mt-0.5 h-4 w-4 shrink-0" />
-                    <div className="space-y-3">
-                      <p>Connect your wallet before withdrawing funds from this agent treasury.</p>
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        onClick={() => void connectWallet()}
-                        disabled={isConnecting}
-                      >
-                        {isConnecting ? "Connecting wallet..." : "Connect wallet"}
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              ) : null}
-
-              {address && !isCorrectNetwork ? (
-                <div className="rounded-2xl border border-amber-400/30 bg-amber-400/10 p-4 text-sm text-amber-100">
-                  <div className="flex items-start gap-3">
-                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                    <div className="space-y-3">
-                      <p>Switch your wallet to Arbitrum Sepolia before withdrawing.</p>
-                      <Button type="button" variant="secondary" onClick={() => void switchNetwork()}>
-                        Switch network
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              ) : null}
-
-              {!isPrivateFeaturesUnlocked ? (
-                <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-sm text-slate-400">
-                  Unlock private features above with the agent private key before generating a
-                  withdraw proof.
-                </div>
-              ) : null}
-
-              <div className="grid gap-2">
-                <Label htmlFor="withdraw-amount">Amount to withdraw</Label>
-                <Input
-                  id="withdraw-amount"
-                  inputMode="decimal"
-                  value={withdrawAmount}
-                  onChange={(event) => {
-                    const nextValue = event.target.value;
-
-                    if (nextValue === "" || /^(?:0|[1-9]\d*)(?:\.\d{0,3})?$/.test(nextValue)) {
-                      setWithdrawAmount(nextValue);
-                    }
-                  }}
-                  placeholder="0.10"
-                />
-                <p className="text-xs leading-6 text-slate-500">
-                  Uses the same proof amount encoding as deposits and submits the withdrawal proof
-                  with the same wallet gas configuration.
-                </p>
-              </div>
-
-              {!withdrawAmount || isValidWithdrawAmount ? null : (
-                <div className="rounded-2xl border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-200">
-                  Enter a valid positive amount with at most 3 decimals.
-                </div>
-              )}
+              <WalletGate
+                address={address}
+                isConnecting={isConnecting}
+                isCorrectNetwork={isCorrectNetwork}
+                onConnect={() => void connectWallet()}
+                onSwitchNetwork={() => void switchNetwork()}
+              />
 
               {walletError ? (
                 <div className="rounded-2xl border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-200">
@@ -830,221 +771,192 @@ export default function AgentDetailsPage() {
                 </div>
               ) : null}
 
-              {withdrawError ? (
-                <div className="rounded-2xl border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-200">
-                  {withdrawError}
-                </div>
-              ) : null}
-
-              {withdrawSuccess ? (
-                <div className="rounded-2xl border border-emerald-400/30 bg-emerald-400/10 p-4 text-sm text-emerald-100">
-                  {withdrawSuccess}
-                </div>
-              ) : null}
-
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                <div className="text-sm text-slate-400">
-                  This submits a private withdrawal proof on-chain and sends the underlying WETH
-                  back to the connected controller wallet.
-                </div>
-                <Button
-                  type="button"
-                  onClick={() => void handleWithdraw()}
-                  disabled={
-                    !isValidWithdrawAmount ||
-                    !address ||
-                    !isCorrectNetwork ||
-                    !isPrivateFeaturesUnlocked ||
-                    isWithdrawing
-                  }
-                >
-                  {isWithdrawing ? "Withdrawing..." : "Withdraw"}
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="rounded-[1.75rem]">
-            <CardHeader>
-              <div className="flex items-center gap-3">
-                <div className="rounded-2xl border border-white/10 bg-white/5 p-3 text-sky-300">
-                  <Sparkles className="h-5 w-5" />
-                </div>
-                <div>
-                  <CardTitle>Deposit funds</CardTitle>
-                  <p className="mt-1 text-sm text-slate-400">
-                    Set how much WETH you want to deposit into this agent treasury.
+              {/* Deposit / Withdraw, side by side */}
+              <div className="grid gap-6 lg:grid-cols-2">
+                <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-6">
+                  <div className="flex items-center gap-3">
+                    <ArrowDownToLine className="h-4 w-4 text-emerald-300" />
+                    <h4 className="font-medium text-white">Deposit</h4>
+                  </div>
+                  <p className="mt-2 text-sm leading-6 text-slate-400">
+                    Fund the treasury with WETH from your wallet. Approves the ERC-20, then
+                    submits a private deposit proof.
                   </p>
+                  <div className="mt-4 grid gap-2">
+                    <Label htmlFor="deposit-amount" className="sr-only">
+                      Amount to deposit
+                    </Label>
+                    <div className="flex gap-3">
+                      <Input
+                        id="deposit-amount"
+                        inputMode="decimal"
+                        value={depositAmount}
+                        onChange={(event) => {
+                          const nextValue = event.target.value;
+                          if (nextValue === "" || /^(?:0|[1-9]\d*)(?:\.\d{0,3})?$/.test(nextValue)) {
+                            setDepositAmount(nextValue);
+                          }
+                        }}
+                        placeholder="0.10"
+                      />
+                      <Button
+                        type="button"
+                        onClick={() => void handleDeposit()}
+                        disabled={
+                          !isValidDepositAmount || !address || !isCorrectNetwork || isDepositing
+                        }
+                      >
+                        {isDepositing ? "Depositing..." : "Deposit"}
+                      </Button>
+                    </div>
+                    <p className="text-xs leading-5 text-slate-500">
+                      WETH, up to 3 decimals. Proof generation takes ~1 min in your browser.
+                    </p>
+                  </div>
+                  {!depositAmount || isValidDepositAmount ? null : (
+                    <div className="mt-3 rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-200">
+                      Enter a valid positive amount with at most 3 decimals.
+                    </div>
+                  )}
+                  {depositError ? (
+                    <div className="mt-3 rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-200">
+                      {depositError}
+                    </div>
+                  ) : null}
+                  {depositSuccess ? (
+                    <div className="mt-3 break-all rounded-xl border border-emerald-400/30 bg-emerald-400/10 p-3 text-xs text-emerald-100">
+                      {depositSuccess}
+                    </div>
+                  ) : null}
                 </div>
-                </div>
-              </CardHeader>
-            <CardContent className="space-y-4">
-              {!address ? (
-                <div className="rounded-2xl border border-amber-400/30 bg-amber-400/10 p-4 text-sm text-amber-100">
-                  <div className="flex items-start gap-3">
-                    <Wallet className="mt-0.5 h-4 w-4 shrink-0" />
-                    <div className="space-y-3">
-                      <p>Connect your wallet before depositing funds into this agent treasury.</p>
+
+                <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-6">
+                  <div className="flex items-center gap-3">
+                    <ArrowUpFromLine className="h-4 w-4 text-fuchsia-300" />
+                    <h4 className="font-medium text-white">Withdraw</h4>
+                  </div>
+                  <p className="mt-2 text-sm leading-6 text-slate-400">
+                    Send WETH back to your wallet. The proof verifies the treasury covers the
+                    amount — without revealing it.
+                  </p>
+                  <div className="mt-4 grid gap-2">
+                    <Label htmlFor="withdraw-amount" className="sr-only">
+                      Amount to withdraw
+                    </Label>
+                    <div className="flex gap-3">
+                      <Input
+                        id="withdraw-amount"
+                        inputMode="decimal"
+                        value={withdrawAmount}
+                        onChange={(event) => {
+                          const nextValue = event.target.value;
+                          if (nextValue === "" || /^(?:0|[1-9]\d*)(?:\.\d{0,3})?$/.test(nextValue)) {
+                            setWithdrawAmount(nextValue);
+                          }
+                        }}
+                        placeholder="0.10"
+                      />
                       <Button
                         type="button"
                         variant="secondary"
-                        onClick={() => void connectWallet()}
-                        disabled={isConnecting}
+                        onClick={() => void handleWithdraw()}
+                        disabled={
+                          !isValidWithdrawAmount || !address || !isCorrectNetwork || isWithdrawing
+                        }
                       >
-                        {isConnecting ? "Connecting wallet..." : "Connect wallet"}
+                        {isWithdrawing ? "Withdrawing..." : "Withdraw"}
                       </Button>
                     </div>
+                    <p className="text-xs leading-5 text-slate-500">
+                      Paid out to the connected controller wallet.
+                    </p>
                   </div>
-                </div>
-              ) : null}
-
-              {address && !isCorrectNetwork ? (
-                <div className="rounded-2xl border border-amber-400/30 bg-amber-400/10 p-4 text-sm text-amber-100">
-                  <div className="flex items-start gap-3">
-                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                    <div className="space-y-3">
-                      <p>Switch your wallet to Arbitrum Sepolia before depositing.</p>
-                      <Button type="button" variant="secondary" onClick={() => void switchNetwork()}>
-                        Switch network
-                      </Button>
+                  {!withdrawAmount || isValidWithdrawAmount ? null : (
+                    <div className="mt-3 rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-200">
+                      Enter a valid positive amount with at most 3 decimals.
                     </div>
-                  </div>
+                  )}
+                  {withdrawError ? (
+                    <div className="mt-3 rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-200">
+                      {withdrawError}
+                    </div>
+                  ) : null}
+                  {withdrawSuccess ? (
+                    <div className="mt-3 break-all rounded-xl border border-emerald-400/30 bg-emerald-400/10 p-3 text-xs text-emerald-100">
+                      {withdrawSuccess}
+                    </div>
+                  ) : null}
                 </div>
-              ) : null}
-
-              {!isPrivateFeaturesUnlocked ? (
-                <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-sm text-slate-400">
-                  Unlock private features above with the agent private key before generating a
-                  deposit proof.
-                </div>
-              ) : null}
-
-              <div className="grid gap-2">
-                <Label htmlFor="deposit-amount">Amount to deposit</Label>
-                <Input
-                  id="deposit-amount"
-                  inputMode="decimal"
-                  value={depositAmount}
-                  onChange={(event) => {
-                    const nextValue = event.target.value;
-
-                    if (nextValue === "" || /^(?:0|[1-9]\d*)(?:\.\d{0,3})?$/.test(nextValue)) {
-                      setDepositAmount(nextValue);
-                    }
-                  }}
-                  placeholder="0.10"
-                />
-                <p className="text-xs leading-6 text-slate-500">
-                  Accepts positive WETH amounts with up to 3 decimals, for example `0.125` or
-                  `12.500`.
-                </p>
               </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
-              {!depositAmount || isValidDepositAmount ? null : (
-                <div className="rounded-2xl border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-200">
-                  Enter a valid positive amount with at most 3 decimals.
-                </div>
-              )}
-
-              {walletError ? (
-                <div className="rounded-2xl border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-200">
-                  {walletError}
-                </div>
-              ) : null}
-
-              {depositError ? (
-                <div className="rounded-2xl border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-200">
-                  {depositError}
-                </div>
-              ) : null}
-
-              {depositSuccess ? (
-                <div className="rounded-2xl border border-emerald-400/30 bg-emerald-400/10 p-4 text-sm text-emerald-100">
-                  {depositSuccess}
-                </div>
-              ) : null}
-
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                <div className="text-sm text-slate-400">
-                  This funds the encrypted agent treasury with WETH by approving the ERC-20 transfer
-                  first and then submitting a private deposit proof on-chain.
-                </div>
-                <Button
-                  type="button"
-                  onClick={() => void handleDeposit()}
-                  disabled={
-                    !isValidDepositAmount ||
-                    !address ||
-                    !isCorrectNetwork ||
-                    !isPrivateFeaturesUnlocked ||
-                    isDepositing
-                  }
+      {/* ── Identity & service: compact reference info ── */}
+      <div className="grid gap-6 lg:grid-cols-2">
+        <Card className="rounded-[1.75rem]">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">Identity</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <InfoRow label="Velum agent ID">#{agent.agentId}</InfoRow>
+            <InfoRow label="Category">{agent.category}</InfoRow>
+            <InfoRow label="ERC-8004">
+              {agent.erc8004Url && agent.erc8004AgentId != null ? (
+                <a
+                  href={agent.erc8004Url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-2 text-sky-300 underline-offset-4 hover:underline"
                 >
-                  {isDepositing ? "Depositing..." : "Deposit"}
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="rounded-[1.75rem]">
-            <CardHeader>
-              <CardTitle>Agent details</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <DetailItem label="Title" value={agent.title} />
-              <DetailItem label="Description" value={agent.description} />
-              <DetailItem label="Category" value={agent.category} />
-            </CardContent>
-          </Card>
-        </div>
+                  Agent #{agent.erc8004AgentId} — view on-chain identity ↗
+                </a>
+              ) : (
+                <span className="text-slate-500">Not registered</span>
+              )}
+            </InfoRow>
+            <InfoRow label="Created">{formatDate(agent.createdAt)}</InfoRow>
+            <InfoRow label="Updated">{formatDate(agent.updatedAt)}</InfoRow>
+            <InfoRow label="ElGamal public key" mono>
+              {agent.publicKey}
+            </InfoRow>
+          </CardContent>
+        </Card>
 
         <Card className="rounded-[1.75rem]">
-          <CardHeader>
-            <CardTitle>Service details</CardTitle>
+          <CardHeader className="pb-2">
+            <div className="flex items-center justify-between gap-3">
+              <CardTitle className="text-base">Service</CardTitle>
+              {agent.service ? (
+                <Badge className="border-emerald-400/30 bg-emerald-400/10 text-emerald-200">
+                  Selling services
+                </Badge>
+              ) : (
+                <Badge className="border-white/10 bg-white/5 text-slate-300">Internal only</Badge>
+              )}
+            </div>
           </CardHeader>
-          <CardContent className="space-y-4">
+          <CardContent>
             {agent.service ? (
               <>
-                <DetailItem label="Price" value={agent.service.price} />
-                <DetailItem label="Currency" value={agent.service.currency} />
-                <DetailItem label="Pricing model" value={agent.service.pricingModel} />
-                <DetailItem label="Billing unit" value={agent.service.billingUnit} />
-                <DetailItem label="Status" value={agent.service.status} />
+                <InfoRow label="Price">{priceLabel}</InfoRow>
+                <InfoRow label="Pricing model">{agent.service.pricingModel}</InfoRow>
+                <InfoRow label="Status">{agent.service.status}</InfoRow>
+                <InfoRow label="Endpoint" mono>
+                  {agent.service.endpointUrl}
+                </InfoRow>
+                <InfoRow label="Listed since">{formatDate(agent.service.createdAt)}</InfoRow>
               </>
             ) : (
-              <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-sm text-slate-400">
-                This agent does not currently expose a service to other agents.
-              </div>
+              <p className="py-3 text-sm leading-6 text-slate-400">
+                This agent doesn&apos;t expose a paid service in the marketplace. It can still
+                hold a confidential treasury and pay other agents.
+              </p>
             )}
           </CardContent>
         </Card>
       </div>
-
-      {agent.service ? (
-        <Card className="rounded-[1.75rem]">
-          <CardHeader>
-            <div className="flex items-center gap-3">
-              <div className="rounded-2xl border border-white/10 bg-white/5 p-3 text-sky-300">
-                <Globe className="h-5 w-5" />
-              </div>
-              <CardTitle>Service endpoint</CardTitle>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <DetailItem label="Endpoint URL" value={agent.service.endpointUrl} mono />
-            <div className="grid gap-4 md:grid-cols-2">
-              <DetailItem
-                label="Service created at"
-                value={formatDate(agent.service.createdAt)}
-              />
-              <DetailItem
-                label="Service updated at"
-                value={formatDate(agent.service.updatedAt)}
-              />
-            </div>
-          </CardContent>
-        </Card>
-      ) : null}
     </div>
   );
 }

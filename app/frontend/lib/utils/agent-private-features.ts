@@ -12,7 +12,6 @@ const MAX_PROOF_AMOUNT = (BigInt(1) << BigInt(40)) - BigInt(1);
 const APPROVE_SELECTOR = "095ea7b3";
 const DEPOSIT_SELECTOR = "62023c7b";
 const WITHDRAW_SELECTOR = "f5c939a1";
-const TRANSFER_CONFIDENTIAL_SELECTOR = "66e7435b";
 
 const depositBackend = new UltraHonkBackend(depositCircuit.bytecode as unknown as string);
 const withdrawBackend = new UltraHonkBackend(withdrawCircuit.bytecode as unknown as string);
@@ -23,7 +22,7 @@ type ProofPoint = {
   y: string;
 };
 
-type DepositWithdrawProofParams = {
+type DepositProofParams = {
   agentId: string;
   agentPrivateKey: string;
   agentPublicKey: string;
@@ -32,11 +31,19 @@ type DepositWithdrawProofParams = {
   amount: bigint;
 };
 
+type WithdrawProofParams = DepositProofParams & {
+  // Plaintext of the current balance (proof units). Stays a private witness in
+  // the circuit; it is bound to the public ciphertext to prove solvency.
+  currentBalance: bigint;
+};
+
 type TransferProofParams = {
   senderAgentId: string;
   senderPrivateKey: string;
   senderPublicKey: string;
   senderCurrentEncryptedBalance: number[];
+  // Plaintext of the sender's current balance (proof units), private witness.
+  senderCurrentBalance: bigint;
   receiverAgentId: string;
   receiverPublicKey: string;
   receiverCurrentEncryptedBalance: number[];
@@ -207,10 +214,6 @@ export function buildWithdrawCalldata(proofInputs: Uint8Array, proof: Uint8Array
   return buildProofCalldata(WITHDRAW_SELECTOR, proofInputs, proof);
 }
 
-export function buildTransferConfidentialCalldata(proofInputs: Uint8Array, proof: Uint8Array) {
-  return buildProofCalldata(TRANSFER_CONFIDENTIAL_SELECTOR, proofInputs, proof);
-}
-
 export function generateProofRandomness() {
   const randomBytes = crypto.getRandomValues(new Uint8Array(16));
   return BigInt(
@@ -230,7 +233,7 @@ async function generateProof(
   return backend.generateProof(witness, { keccak: true });
 }
 
-export async function generateAgentDepositProof(params: DepositWithdrawProofParams) {
+export async function generateAgentDepositProof(params: DepositProofParams) {
   const [agentPubkey] = splitAgentPublicKey(params.agentPublicKey);
   const { currentBalanceX1, currentBalanceX2 } = parseEncryptedBalanceForProof(
     params.currentEncryptedBalance,
@@ -261,16 +264,21 @@ export async function generateAgentDepositProof(params: DepositWithdrawProofPara
   };
 }
 
-export async function generateAgentWithdrawProof(params: DepositWithdrawProofParams) {
+export async function generateAgentWithdrawProof(params: WithdrawProofParams) {
   const [agentPubkey] = splitAgentPublicKey(params.agentPublicKey);
   const { currentBalanceX1, currentBalanceX2 } = parseEncryptedBalanceForProof(
     params.currentEncryptedBalance,
   );
 
+  if (params.amount > params.currentBalance) {
+    throw new Error("Withdraw amount exceeds the agent's current balance.");
+  }
+
   const inputs: InputMap = {
     agent_priv_key: BigInt(params.agentPrivateKey).toString(),
     r_amount: generateProofRandomness(),
     agent_id: BigInt(params.agentId).toString(),
+    current_balance: params.currentBalance.toString(),
     agent_pubkey: agentPubkey,
     current_balance_x1: currentBalanceX1,
     current_balance_x2: currentBalanceX2,
@@ -298,9 +306,14 @@ export async function generateAgentTransferProof(params: TransferProofParams) {
   const senderBalance = parseEncryptedBalanceForProof(params.senderCurrentEncryptedBalance);
   const receiverBalance = parseEncryptedBalanceForProof(params.receiverCurrentEncryptedBalance);
 
+  if (params.amount > params.senderCurrentBalance) {
+    throw new Error("Transfer amount exceeds the sender agent's current balance.");
+  }
+
   const inputs: InputMap = {
     sender_priv_key: BigInt(params.senderPrivateKey).toString(),
     transfer_amount: params.amount.toString(),
+    sender_current_balance: params.senderCurrentBalance.toString(),
     r_amount_sender: generateProofRandomness(),
     r_amount_receiver: generateProofRandomness(),
     sender_agent_id: BigInt(params.senderAgentId).toString(),

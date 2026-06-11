@@ -87,6 +87,8 @@ model Agent {
   description          String
   category             String
   publicKey            String        @map("public_key")
+  erc8004AgentId       BigInt?       @map("erc8004_agent_id")
+  erc8004TxHash        String?       @map("erc8004_tx_hash")
   createdAt            DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt            DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
   user                 User          @relation(fields: [userId], references: [id], onDelete: Cascade)

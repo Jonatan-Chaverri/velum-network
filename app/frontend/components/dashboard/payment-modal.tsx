@@ -5,11 +5,11 @@ import { useEffect, useMemo, useState } from "react";
 import { getAccessTokenCookie } from "@/lib/auth/cookies";
 import type { Agent } from "@/lib/data/agents";
 import {
-  buildTransferConfidentialCalldata,
   convertAgentTransferPublicInputs,
   convertDisplayAmountToProofAmount,
   generateAgentTransferProof,
 } from "@/lib/utils/agent-private-features";
+import { decryptAgentBalance } from "@/lib/utils/agent-balance";
 import { getAgentPrivateKey } from "@/lib/utils/agent-private-key-storage";
 import {
   Dialog,
@@ -203,12 +203,21 @@ export function PaymentModal() {
         throw new Error("Sender and receiver balances are using different tokens.");
       }
 
+      // Decrypt the sender balance locally; the circuit needs the plaintext as a
+      // private witness to prove solvency (balance >= amount) without revealing it.
+      const senderPlainBalance = decryptAgentBalance(senderBalance.encrypted, senderPrivateKey);
+
+      if (proofAmount > senderPlainBalance) {
+        throw new Error("The sender agent does not have enough balance for this payment.");
+      }
+
       setStep(2);
       const { proof, publicInputs } = await generateAgentTransferProof({
         senderAgentId: senderAgent.agentId,
         senderPrivateKey,
         senderPublicKey: senderAgent.publicKey,
         senderCurrentEncryptedBalance: senderBalance.encrypted,
+        senderCurrentBalance: senderPlainBalance,
         receiverAgentId: receiverAgent.agentId,
         receiverPublicKey: receiverAgent.publicKey,
         receiverCurrentEncryptedBalance: receiverBalance.encrypted,
@@ -217,10 +226,6 @@ export function PaymentModal() {
       });
 
       const packedPublicInputs = convertAgentTransferPublicInputs(publicInputs);
-
-      // Build calldata locally too so transfer uses the same proof-input shape as deposit/withdraw.
-      // The backend submits this owner-only transaction after re-encoding the same proof payload.
-      buildTransferConfidentialCalldata(packedPublicInputs, proof);
 
       setStep(3);
       const accessToken = getAccessTokenCookie();

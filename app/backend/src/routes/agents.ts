@@ -7,6 +7,11 @@ import { TokenPayload } from '../auth/utils/tokens';
 import { buildRegisterAgentTransaction } from '../lib/agentRegistration';
 import { getConfidentialErc20Address, getWethTokenAddress } from '../lib/contracts';
 import { prisma } from '../lib/prisma';
+import {
+  getErc8004RegistryAddress,
+  getErc8004ExplorerUrl,
+  registerAgentErc8004,
+} from '../services/erc8004';
 
 const { decodeFunctionResult, encodeFunctionData, parseAbi } = require('viem');
 const { createPublicClient, createWalletClient, http } = require('viem');
@@ -18,7 +23,9 @@ const confidentialErc20ReadAbi = parseAbi([
   'function balanceOfEnc(address token, uint32 agent_id) view returns (uint8[128])',
 ]);
 const confidentialErc20WriteAbi = parseAbi([
-  'function transfer_confidential(uint8[] proof_inputs, bytes proof)',
+  // Stylus exports snake_case Rust methods as camelCase in the ABI - the
+  // on-chain selector is keccak("transferConfidential(uint8[],bytes)").
+  'function transferConfidential(uint8[] proof_inputs, bytes proof)',
 ]);
 
 const DEFAULT_FALLBACK_GAS_LIMIT = BigInt(8_000_000);
@@ -201,6 +208,8 @@ function formatAgentResponse(agent: {
   description: string;
   category: string;
   publicKey: string;
+  erc8004AgentId?: bigint | null;
+  erc8004TxHash?: string | null;
   createdAt: Date;
   updatedAt: Date;
   services?: Array<{
@@ -224,6 +233,9 @@ function formatAgentResponse(agent: {
     description: agent.description,
     category: agent.category,
     publicKey: agent.publicKey,
+    erc8004AgentId: agent.erc8004AgentId != null ? agent.erc8004AgentId.toString() : null,
+    erc8004TxHash: agent.erc8004TxHash ?? null,
+    erc8004Url: agent.erc8004AgentId != null ? getErc8004ExplorerUrl(agent.erc8004AgentId) : null,
     createdAt: agent.createdAt,
     updatedAt: agent.updatedAt,
     service: service
@@ -297,6 +309,8 @@ router.get('/', async (req, res, next) => {
         description: true,
         category: true,
         publicKey: true,
+        erc8004AgentId: true,
+        erc8004TxHash: true,
         createdAt: true,
         updatedAt: true,
         services: {
@@ -325,6 +339,81 @@ router.get('/', async (req, res, next) => {
     return res.status(200).json({
       success: true,
       agents: agents.map((agent) => formatAgentResponse(agent)),
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ERC-8004 agent card (registration file). Public and unauthenticated: this is
+// what the IdentityRegistry tokenURI resolves to, so explorers and other
+// agents can discover the agent's capabilities and payment rails.
+router.get('/public/:id/card', async (req, res, next) => {
+  try {
+    const agent = await prisma.agent.findUnique({
+      where: { id: req.params.id },
+      select: {
+        id: true,
+        agentId: true,
+        title: true,
+        description: true,
+        category: true,
+        publicKey: true,
+        erc8004AgentId: true,
+        services: {
+          select: {
+            price: true,
+            pricingModel: true,
+            currency: true,
+            billingUnit: true,
+            endpointUrl: true,
+            status: true,
+          },
+          take: 1,
+          orderBy: { createdAt: 'desc' },
+        },
+      },
+    });
+
+    if (!agent) {
+      return res.status(404).json({ error: 'Agent not found' });
+    }
+
+    const registry = getErc8004RegistryAddress();
+    const [service] = agent.services;
+
+    return res.status(200).json({
+      type: 'https://eips.ethereum.org/EIPS/eip-8004',
+      name: agent.title,
+      description: agent.description,
+      services: service
+        ? [
+            {
+              name: 'api',
+              endpoint: service.endpointUrl,
+              price: String(service.price),
+              currency: service.currency,
+              billingUnit: service.billingUnit,
+            },
+          ]
+        : [],
+      registrations:
+        agent.erc8004AgentId != null && registry
+          ? [
+              {
+                agentId: Number(agent.erc8004AgentId),
+                agentRegistry: `eip155:421614:${registry}`,
+              },
+            ]
+          : [],
+      supportedTrust: ['feedback'],
+      'x-velum': {
+        velumAgentId: agent.agentId.toString(),
+        category: agent.category,
+        confidentialPayments: true,
+        settlementContract: getConfidentialErc20Address(),
+        elgamalPublicKey: agent.publicKey,
+      },
     });
   } catch (error) {
     next(error);
@@ -444,7 +533,7 @@ router.post('/transfer', async (req, res, next) => {
 
     const data = encodeFunctionData({
       abi: confidentialErc20WriteAbi,
-      functionName: 'transfer_confidential',
+      functionName: 'transferConfidential',
       args: [proofInputs, proofHex],
     });
 
@@ -528,6 +617,8 @@ router.get('/:id', async (req, res, next) => {
         description: true,
         category: true,
         publicKey: true,
+        erc8004AgentId: true,
+        erc8004TxHash: true,
         createdAt: true,
         updatedAt: true,
         services: {
@@ -794,10 +885,39 @@ router.post('/', async (req, res, next) => {
       serviceCreated: !!createdAgent.service,
     });
 
+    // Register the agent in the ERC-8004 IdentityRegistry. Best-effort: a chain
+    // hiccup must not lose the agent the user just created.
+    let erc8004: { erc8004AgentId: bigint; txHash: string } | null = null;
+
+    try {
+      const baseUrl = (process.env.PUBLIC_API_URL ?? 'http://localhost:3001').replace(/\/+$/, '');
+      erc8004 = await registerAgentErc8004(`${baseUrl}/api/agents/public/${createdAgent.agent.id}/card`);
+
+      if (erc8004) {
+        await prisma.agent.update({
+          where: { id: createdAgent.agent.id },
+          data: {
+            erc8004AgentId: erc8004.erc8004AgentId,
+            erc8004TxHash: erc8004.txHash,
+          },
+        });
+
+        console.log('[agents.create] registered in ERC-8004', {
+          agentDbId: createdAgent.agent.id,
+          erc8004AgentId: erc8004.erc8004AgentId.toString(),
+          txHash: erc8004.txHash,
+        });
+      }
+    } catch (erc8004Error) {
+      console.error('[agents.create] ERC-8004 registration failed (agent was still created):', erc8004Error);
+    }
+
     return res.status(201).json({
       success: true,
       agent: formatAgentResponse({
         ...createdAgent.agent,
+        erc8004AgentId: erc8004?.erc8004AgentId ?? null,
+        erc8004TxHash: erc8004?.txHash ?? null,
         services: createdAgent.service ? [createdAgent.service] : [],
       }),
     });

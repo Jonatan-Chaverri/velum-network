@@ -12,9 +12,9 @@ const items = [
   { href: "/dashboard/agents", label: "Agents", icon: Blocks },
   { href: "/dashboard/marketplace", label: "Marketplace", icon: Store },
   { href: "/dashboard/payments", label: "Payments", icon: CreditCard },
-  { href: "/dashboard/policies", label: "Policies", icon: ShieldCheck },
+  { href: "/dashboard/policies", label: "Policies", icon: ShieldCheck, badge: "Soon" },
   { href: "/dashboard/settings", label: "Settings", icon: Settings },
-];
+] as Array<{ href: string; label: string; icon: typeof LayoutGrid; badge?: string }>;
 
 export function DashboardSidebar() {
   const pathname = usePathname();
@@ -38,7 +38,12 @@ export function DashboardSidebar() {
               )}
             >
               <Icon className="h-4 w-4" />
-              {item.label}
+              <span className="flex-1">{item.label}</span>
+              {item.badge ? (
+                <span className="rounded-full border border-amber-400/30 bg-amber-400/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-200">
+                  {item.badge}
+                </span>
+              ) : null}
             </Link>
           );
         })}

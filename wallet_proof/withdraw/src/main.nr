@@ -43,6 +43,7 @@ fn main(
     agent_priv_key: Field,
     r_amount: Field,                // Randomness for encrypting amount
     agent_id: Field,
+    current_balance: Field,         // Plaintext of the current balance (stays private!)
 
     // Public inputs (visible in proof) - ORDER MATTERS for contract!
     agent_pubkey: pub Point,
@@ -66,10 +67,19 @@ fn main(
     // Enforce range constraints
     amount.assert_max_bit_size::<40>();
     agent_id.assert_max_bit_size::<32>();
+    current_balance.assert_max_bit_size::<40>();
 
     // Verify the agent's public key matches their private key
     let computed_agent_pubkey = public_key(agent_priv_key);
     assert(computed_agent_pubkey == agent_pubkey_ec);
+
+    // SOLVENCY CHECK: bind the private plaintext balance to the public on-chain
+    // ciphertext, then require balance >= amount. Without this, homomorphic
+    // subtraction would happily wrap "negative" and let an agent withdraw
+    // custody funds it never had.
+    let decrypted_current_balance = decrypt(current_balance_ct, agent_priv_key);
+    verify_embedding(decrypted_current_balance, current_balance);
+    assert(current_balance as u64 >= amount as u64);
 
     // Encrypt the withdrawal amount under the agent's public key
     let amount_ct = encrypt(agent_pubkey_ec, amount, r_amount);
@@ -110,6 +120,7 @@ fn test_withdraw_basic() {
         agent_priv_key,
         r_amount,
         agent_id,
+        current_balance,
         Point { x: agent_pubkey.x, y: agent_pubkey.y },
         Point { x: old_balance_ct.0.x, y: old_balance_ct.0.y },
         Point { x: old_balance_ct.1.x, y: old_balance_ct.1.y },
@@ -149,6 +160,7 @@ fn test_withdraw_all_balance() {
         agent_priv_key,
         r_amount,
         agent_id,
+        current_balance,
         Point { x: agent_pubkey.x, y: agent_pubkey.y },
         Point { x: old_balance_ct.0.x, y: old_balance_ct.0.y },
         Point { x: old_balance_ct.1.x, y: old_balance_ct.1.y },
@@ -166,4 +178,58 @@ fn test_withdraw_all_balance() {
     let decrypted_new_balance = decrypt(returned_new_balance_ct, agent_priv_key);
     verify_embedding(decrypted_new_balance, 0);
     assert(returned_agent_id == agent_id);
+}
+
+#[test(should_fail)]
+fn test_withdraw_more_than_balance_fails() {
+    // Agent with 100 tokens tries to withdraw 500 - must be rejected
+    let agent_priv_key = 42;
+    let agent_pubkey = public_key(agent_priv_key);
+    let agent_id = 7;
+
+    let current_balance = 100;
+    let amount = 500;
+
+    let r_old = 111;
+    let old_balance_ct = encrypt(agent_pubkey, current_balance, r_old);
+
+    let _ = main(
+        agent_priv_key,
+        222,
+        agent_id,
+        current_balance,
+        Point { x: agent_pubkey.x, y: agent_pubkey.y },
+        Point { x: old_balance_ct.0.x, y: old_balance_ct.0.y },
+        Point { x: old_balance_ct.1.x, y: old_balance_ct.1.y },
+        3,
+        amount
+    );
+}
+
+#[test(should_fail)]
+fn test_withdraw_lying_about_balance_fails() {
+    // Agent with 100 tokens claims a plaintext balance of 1000 - the embedding
+    // check against the real ciphertext must reject the proof
+    let agent_priv_key = 42;
+    let agent_pubkey = public_key(agent_priv_key);
+    let agent_id = 7;
+
+    let real_balance = 100;
+    let claimed_balance = 1000;
+    let amount = 500;
+
+    let r_old = 111;
+    let old_balance_ct = encrypt(agent_pubkey, real_balance, r_old);
+
+    let _ = main(
+        agent_priv_key,
+        222,
+        agent_id,
+        claimed_balance,
+        Point { x: agent_pubkey.x, y: agent_pubkey.y },
+        Point { x: old_balance_ct.0.x, y: old_balance_ct.0.y },
+        Point { x: old_balance_ct.1.x, y: old_balance_ct.1.y },
+        3,
+        amount
+    );
 }

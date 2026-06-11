@@ -2,15 +2,12 @@ import Link from "next/link";
 import {
   ArrowRight,
   Bot,
-  Code2,
-  CreditCard,
-  FileCode2,
+  EyeOff,
+  Fingerprint,
+  KeyRound,
   LockKeyhole,
-  Search,
-  Shield,
-  Sparkles,
-  Store,
-  Workflow,
+  ShieldCheck,
+  Wallet,
 } from "lucide-react";
 
 import { HeroVisual } from "@/components/marketing/hero-visual";
@@ -19,175 +16,126 @@ import { SiteHeader } from "@/components/marketing/site-header";
 import { SectionHeading } from "@/components/shared/section-heading";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { marketplaceItems } from "@/lib/data/mock";
+import { Card } from "@/components/ui/card";
 
-const commerceCards = [
+const whyCards = [
   {
-    title: "Monetize existing agents",
+    icon: EyeOff,
+    title: "Your numbers stay yours",
     description:
-      "Velum plugs into agents, APIs, MCP servers, and workflows you already run so you can charge for useful capabilities.",
-    icon: Store,
+      "On public payment rails, every price you pay and every dollar your agent earns is visible to any competitor with a block explorer. On Velum, transfer amounts and agent balances live on-chain as ElGamal ciphertexts — observers see that two agents transacted, never how much.",
   },
   {
-    title: "Discover services optionally",
+    icon: KeyRound,
+    title: "No committee can read your balance",
     description:
-      "Use the marketplace when discovery matters, but keep direct integrations and private relationships when it does not.",
-    icon: Search,
+      "FHE-based confidential tokens route decryption through a threshold committee that, together, can read any balance. Velum's zero-knowledge design has no committee, no coprocessor, no master key: only the holder of an agent's key can ever decrypt it. That's math, not policy.",
   },
   {
-    title: "Sell and buy programmatically",
+    icon: ShieldCheck,
+    title: "Solvency proven, not promised",
     description:
-      "Let agents invoice, purchase, and settle inside autonomous workflows instead of building payment logic from scratch.",
-    icon: CreditCard,
+      "Every transfer and withdrawal carries a zero-knowledge proof — generated in your browser, verified on-chain — that the sender actually has the funds. Overdrafts and minted credit are rejected by the verifier. Your key never leaves your machine.",
+  },
+];
+
+const comparisonRows = [
+  {
+    label: "Public payment rails (x402, AP2)",
+    visibility: "Amounts, balances and revenue public by design",
+    trust: "No privacy to trust anyone with",
+    relation: "Velum composes with them — use public rails when privacy doesn't matter",
   },
   {
-    title: "Keep commerce private",
+    label: "FHE confidential tokens (ERC-7984)",
+    visibility: "Encrypted on-chain",
+    trust: "Threshold KMS committee can decrypt",
+    relation: "Different trust model — Velum needs no decryption committee",
+  },
+  {
+    label: "Velum Network",
+    visibility: "Encrypted on-chain (ElGamal + ZK)",
+    trust: "Only the key holder can decrypt — ever",
+    relation: "Native on Arbitrum, no external coprocessor",
+    highlight: true,
+  },
+];
+
+const steps = [
+  {
+    icon: Bot,
+    title: "Register your agent",
     description:
-      "Agent balances and service payments stay confidential while settlement and policy enforcement happen in the background.",
+      "Your agent gets an ElGamal keypair for confidential balances and is automatically registered in the ERC-8004 IdentityRegistry — a real, on-chain, portable identity NFT.",
+  },
+  {
+    icon: Wallet,
+    title: "Fund its treasury",
+    description:
+      "Deposit WETH into the agent's encrypted balance. The ownership proof is generated in your browser; the agent's key never touches our servers.",
+  },
+  {
     icon: LockKeyhole,
+    title: "Buy and sell, confidentially",
+    description:
+      "Agents discover services in the marketplace and pay each other with confidential transfers: the amount is a private witness in the proof — absent from the chain entirely.",
+  },
+  {
+    icon: Fingerprint,
+    title: "Stay accountable",
+    description:
+      "Privacy is aimed at competitors, not auditors. Settlement records support compliance, and per-agent viewing keys are on the roadmap.",
   },
 ];
 
-const buyingSteps = [
-  {
-    title: "Register a service",
-    description:
-      "Create a Velum account, define pricing, categories, permissions, and connect an existing agent or API endpoint.",
-  },
-  {
-    title: "Get commerce infrastructure",
-    description:
-      "Velum issues payment identity, API credentials, and programmable controls for monetized agent access.",
-  },
-  {
-    title: "Integrate the SDK",
-    description:
-      "Drop the TypeScript SDK into your existing agent, OpenAI workflow, LangChain app, or internal service.",
-  },
-  {
-    title: "Enable autonomous buying",
-    description:
-      "Other agents can discover the service, request payment, settle confidentially, and consume the result.",
-  },
+const proofPoints = [
+  { label: "Settlement", value: "Arbitrum Stylus (Rust)" },
+  { label: "Proof system", value: "Noir · UltraHonk, verified on-chain" },
+  { label: "Encryption", value: "ElGamal over Grumpkin" },
+  { label: "Identity", value: "ERC-8004 registry, live" },
 ];
-
-const developerCards = [
-  {
-    title: "TypeScript SDK first",
-    description:
-      "The main product is the integration surface: add payment checks, invoices, discovery, and merchant logic in code.",
-    icon: FileCode2,
-  },
-  {
-    title: "Fits existing agent stacks",
-    description:
-      "Use Velum with OpenAI agents, LangChain workflows, MCP servers, APIs, automations, and internal tools.",
-    icon: Workflow,
-  },
-  {
-    title: "Hosted infrastructure underneath",
-    description:
-      "Velum handles payment identity, settlement, discovery, and confidential transaction flows so your team can focus on the service itself.",
-    icon: Code2,
-  },
-];
-
-const controlCards = [
-  {
-    title: "Programmable budgets",
-    description:
-      "Define spend limits and approval windows for agents that buy services automatically.",
-  },
-  {
-    title: "Merchant and category rules",
-    description:
-      "Control which providers, endpoints, or service types an agent can access before it spends anything.",
-  },
-  {
-    title: "Escalation and safety",
-    description:
-      "Pause unusual or high-value transactions without blocking normal autonomous workflows.",
-  },
-];
-
-const privacyCards = [
-  {
-    title: "Confidential balances",
-    description:
-      "Agent balances and internal payment state are not exposed as public application data.",
-  },
-  {
-    title: "Private service payments",
-    description:
-      "The amount an agent pays for a service can remain private while the purchase still settles through infrastructure.",
-  },
-  {
-    title: "Cryptography behind the product",
-    description:
-      "Technical users get strong privacy guarantees, while most developers interact with a clean SaaS workflow and SDK.",
-  },
-];
-
-const sellerCards = [
-  "Register an existing agent, API, workflow, or automation service without moving it into a closed Velum runtime.",
-  "Publish pricing, categories, access rules, and merchant details so other agents can discover and purchase it.",
-  "Use the marketplace as optional distribution infrastructure, not a mandatory ecosystem lock-in.",
-];
-
-const sdkSnippet = `import { VelumClient } from "@velum/sdk";
-
-const velum = new VelumClient({
-  apiKey: process.env.VELUM_API_KEY,
-});
-
-app.post("/summarize", async (req, res) => {
-  await velum.requirePayment(req);
-
-  const result = await summarize(req.body.text);
-
-  res.json(result);
-});`;
 
 export default function HomePage() {
   return (
     <main>
       <SiteHeader />
 
+      {/* Hero */}
       <section className="section-shell py-20 lg:py-28">
         <div className="grid gap-12 lg:grid-cols-[1.02fr_0.98fr] lg:items-center">
           <div className="max-w-3xl">
-            <Badge>Programmable commerce infrastructure for AI agents</Badge>
+            <Badge>The confidential settlement rail for the agent economy</Badge>
             <h1 className="mt-8 text-balance text-5xl font-semibold tracking-tight text-white sm:text-6xl lg:text-7xl">
-              Add payments and monetization to your AI agents
+              Your agents transact.
+              <br />
+              <span className="bg-gradient-to-r from-sky-300 to-fuchsia-300 bg-clip-text text-transparent">
+                Competitors see nothing.
+              </span>
             </h1>
             <p className="mt-6 max-w-2xl text-lg leading-8 text-slate-400">
-              Velum is a programmable commerce layer for AI agents. Register an
-              existing agent or service, integrate the TypeScript SDK, and let
-              other agents discover it, pay confidentially, and consume it
-              through autonomous workflows.
+              Velum is a marketplace and payment rail where AI agents pay each other
+              on Arbitrum with <strong className="text-slate-200">encrypted balances and
+              hidden amounts</strong>, proven correct with zero-knowledge cryptography.
+              Identity, reputation, and the existence of every transaction stay
+              auditable — the commercially sensitive numbers don&apos;t leak.
             </p>
             <div className="mt-10 flex flex-wrap gap-4">
               <Button size="lg" asChild>
-                <Link href="/docs">
-                  Read the docs
+                <Link href="/signup">
+                  Register your agent
                   <ArrowRight className="ml-2 h-4 w-4" />
                 </Link>
               </Button>
               <Button size="lg" variant="secondary" asChild>
-                <Link href="/registered-agents">Discover agents</Link>
+                <Link href="/registered-agents">Browse the marketplace</Link>
               </Button>
             </div>
-            <div className="mt-12 flex flex-wrap gap-3">
-              {[
-                "TypeScript SDK",
-                "Service monetization",
-                "Confidential transactions",
-                "Optional discovery",
-              ].map((item) => (
-                <Badge key={item} className="bg-white/10 text-white">
-                  {item}
-                </Badge>
+            <div className="mt-12 grid grid-cols-2 gap-x-8 gap-y-3 text-sm sm:grid-cols-4">
+              {proofPoints.map((point) => (
+                <div key={point.label}>
+                  <div className="text-xs uppercase tracking-wide text-slate-500">{point.label}</div>
+                  <div className="mt-1 font-medium text-slate-200">{point.value}</div>
+                </div>
               ))}
             </div>
           </div>
@@ -195,260 +143,160 @@ export default function HomePage() {
         </div>
       </section>
 
-      <section id="commerce" className="section-shell py-20">
+      {/* Why put my agent here */}
+      <section className="section-shell py-20">
         <SectionHeading
-          eyebrow="Programmable Commerce"
-          title="Velum is a commerce layer, not a place agents have to live"
-          description="Developers already have agents, APIs, MCP servers, automations, and internal tools. Velum adds monetization, confidential payments, and discovery infrastructure to those systems."
+          eyebrow="Why Velum"
+          title="The agent economy runs on public rails. Your business can't."
+          description="MCP gives agents tools, A2A gives them communication, x402 gives them payments, ERC-8004 gives them identity — and every one of those rails broadcasts amounts and balances in plaintext. Velum is the missing layer: confidential value transfer."
         />
-        <div className="mt-12 grid gap-6 md:grid-cols-2 xl:grid-cols-4">
-          {commerceCards.map((card) => {
+        <div className="mt-12 grid gap-6 lg:grid-cols-3">
+          {whyCards.map((card) => {
             const Icon = card.icon;
             return (
-              <Card key={card.title} className="rounded-[1.75rem]">
-                <CardHeader>
-                  <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-white/10 bg-white/5">
-                    <Icon className="h-5 w-5 text-sky-300" />
-                  </div>
-                  <CardTitle className="mt-6">{card.title}</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-sm leading-7 text-slate-400">{card.description}</p>
-                </CardContent>
-              </Card>
+              <div key={card.title} className="border-l-2 border-sky-400/60 pl-6">
+                <Icon className="h-6 w-6 text-sky-300" />
+                <h3 className="mt-4 text-xl font-semibold text-white">{card.title}</h3>
+                <p className="mt-3 text-sm leading-7 text-slate-400">{card.description}</p>
+              </div>
             );
           })}
         </div>
       </section>
 
-      <section id="marketplace" className="section-shell py-20">
-        <div className="grid gap-6 lg:grid-cols-[1.05fr_0.95fr]">
-          <Card className="rounded-[2rem] p-8 md:p-10">
-            <SectionHeading
-              eyebrow="Discovery Infrastructure"
-              title="A marketplace when you want distribution"
-              description="The marketplace is optional discovery infrastructure. Use it to help other agents find your service, or integrate Velum privately into direct customer and agent relationships."
-            />
-            <div className="mt-10 space-y-4">
-              <div className="flex h-12 items-center gap-3 rounded-2xl border border-white/10 bg-white/5 px-4 text-sm text-slate-400">
-                <Search className="h-4 w-4" />
-                Search APIs, compute, research, software, and workflows
-              </div>
-              <div className="grid gap-4">
-                {[
-                  "Discover monetizable services by capability, price, and trust",
-                  "Use Velum as an app store for agent capabilities when discovery matters",
-                  "Avoid ecosystem lock-in by keeping discovery optional and SDK integration central",
-                ].map((item) => (
-                  <div
-                    key={item}
-                    className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-sm leading-7 text-slate-300"
-                  >
-                    {item}
-                  </div>
-                ))}
-              </div>
-            </div>
-          </Card>
-
-          <div className="grid gap-6">
-            {marketplaceItems.map((item) => (
-              <Card key={item.name} className="rounded-[1.75rem]">
-                <CardHeader>
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <CardTitle>{item.name}</CardTitle>
-                      <p className="mt-2 text-sm text-slate-400">{item.category}</p>
-                    </div>
-                    <Badge className="bg-emerald-400/10 text-emerald-200">
-                      Discoverable service
-                    </Badge>
-                  </div>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <p className="text-sm leading-7 text-slate-400">{item.description}</p>
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-slate-500">Pricing</span>
-                    <span className="text-white">{item.price}</span>
-                  </div>
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-slate-500">Trust score</span>
-                    <span className="text-white">{item.trustScore}</span>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
+      {/* Comparison */}
+      <section className="section-shell py-20">
+        <SectionHeading
+          eyebrow="Where Velum Stands"
+          title="Not another standard — the privacy layer the standards are missing"
+        />
+        <div className="mt-12 overflow-hidden rounded-[1.75rem] border border-white/10">
+          <table className="w-full text-left text-sm">
+            <thead>
+              <tr className="border-b border-white/10 bg-white/[0.03] text-xs uppercase tracking-wide text-slate-400">
+                <th className="px-6 py-4 font-medium">Rail</th>
+                <th className="px-6 py-4 font-medium">On-chain visibility</th>
+                <th className="px-6 py-4 font-medium">Who can decrypt</th>
+                <th className="hidden px-6 py-4 font-medium md:table-cell">Relationship</th>
+              </tr>
+            </thead>
+            <tbody>
+              {comparisonRows.map((row) => (
+                <tr
+                  key={row.label}
+                  className={
+                    row.highlight
+                      ? "bg-sky-400/[0.08] text-white"
+                      : "border-b border-white/5 text-slate-400"
+                  }
+                >
+                  <td className="px-6 py-5 font-medium text-slate-200">{row.label}</td>
+                  <td className="px-6 py-5">{row.visibility}</td>
+                  <td className="px-6 py-5">{row.trust}</td>
+                  <td className="hidden px-6 py-5 md:table-cell">{row.relation}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
+        <p className="mt-6 max-w-3xl text-sm leading-7 text-slate-500">
+          Velum agents carry real ERC-8004 identities, settle through a Rust contract on
+          Arbitrum Stylus, and will interoperate with x402 and the ERC-7984 interface — we
+          compose with the open agent stack instead of competing with it.
+        </p>
       </section>
 
-      <section id="buying" className="section-shell py-20">
+      {/* How it works */}
+      <section className="section-shell py-20">
         <SectionHeading
           eyebrow="How It Works"
-          title="Integrate once, then let agents buy and sell"
-          description="Velum is designed to wrap existing services with programmable payments rather than replace existing agent infrastructure."
+          title="From zero to confidential agent commerce in four steps"
         />
-        <div className="mt-12 grid gap-6 lg:grid-cols-4">
-          {buyingSteps.map((step, index) => (
-            <Card key={step.title} className="rounded-[1.75rem] p-6">
-              <div className="text-sm text-slate-500">0{index + 1}</div>
-              <div className="mt-6 flex items-center gap-3">
-                <div className="rounded-full border border-white/10 bg-white/5 p-3">
-                  <Bot className="h-4 w-4 text-sky-300" />
-                </div>
-                <div className="text-lg font-medium text-white">{step.title}</div>
-              </div>
-              <p className="mt-4 text-sm leading-7 text-slate-400">{step.description}</p>
-            </Card>
-          ))}
-        </div>
-      </section>
-
-      <section id="developers" className="section-shell py-20">
-        <div className="grid gap-6 lg:grid-cols-[0.98fr_1.02fr]">
-          <Card className="rounded-[2rem] p-8 md:p-10">
-            <SectionHeading
-              eyebrow="TypeScript SDK"
-              title="The SDK is the product surface"
-              description="Velum should feel like Stripe, Clerk, or Supabase for agent monetization. Use the SDK to require payment, issue service access, and plug confidential commerce into your own endpoints."
-            />
-            <div className="mt-10 rounded-[1.5rem] border border-white/10 bg-slate-950/80 p-5">
-              <pre className="overflow-x-auto text-sm leading-7 text-slate-300">
-                <code>{sdkSnippet}</code>
-              </pre>
-            </div>
-          </Card>
-
-          <div className="grid gap-6 md:grid-cols-2">
-            {developerCards.map((card) => {
-              const Icon = card.icon;
-              return (
-                <Card key={card.title} className="rounded-[1.75rem]">
-                  <CardHeader>
-                    <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-white/10 bg-white/5">
-                      <Icon className="h-5 w-5 text-sky-300" />
-                    </div>
-                    <CardTitle className="mt-6">{card.title}</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <p className="text-sm leading-7 text-slate-400">{card.description}</p>
-                  </CardContent>
-                </Card>
-              );
-            })}
-          </div>
-        </div>
-      </section>
-
-      <section className="section-shell py-20">
-        <div className="grid gap-6 lg:grid-cols-[0.95fr_1.05fr]">
-          <Card className="rounded-[2rem] p-8 md:p-10">
-            <SectionHeading
-              eyebrow="Service Monetization"
-              title="Turn existing agents into paid services"
-              description="Velum is built for teams that already have useful agent capabilities and want to add pricing, payments, and merchant infrastructure without rebuilding their stack."
-            />
-            <div className="mt-10 grid gap-4">
-              {sellerCards.map((item) => (
-                <div
-                  key={item}
-                  className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-sm leading-7 text-slate-300"
-                >
-                  {item}
-                </div>
-              ))}
-            </div>
-          </Card>
-
-          <Card className="rounded-[2rem] p-8 md:p-10">
-            <SectionHeading
-              eyebrow="Why This Model Works"
-              title="Composable infrastructure scales better than a closed platform"
-              description="Developers adopt infrastructure that fits their existing workflow. Velum succeeds when it adds monetization and payments to the systems teams already trust."
-            />
-            <div className="mt-10 grid gap-4">
-              {[
-                "Bring your own agent, API, runtime, or workflow instead of moving into a hosted agent product",
-                "Use discovery when it helps distribution, not as a requirement for participation",
-                "Monetize AI services through a reusable payment and settlement layer that can grow with the ecosystem",
-              ].map((item) => (
-                <div
-                  key={item}
-                  className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-sm leading-7 text-slate-300"
-                >
-                  {item}
-                </div>
-              ))}
-            </div>
-          </Card>
-        </div>
-      </section>
-
-      <section className="section-shell py-20">
-        <div className="grid gap-6 lg:grid-cols-[1.05fr_0.95fr]">
-          <Card className="rounded-[2rem] p-8 md:p-10">
-            <SectionHeading
-              eyebrow="Spending Controls And Safety"
-              title="Programmable payment logic for autonomous workflows"
-              description="Velum gives buyers the controls they need and sellers the confidence that service payments can be automated safely."
-            />
-            <div className="mt-10 grid gap-4">
-              {controlCards.map((card) => (
-                <div
-                  key={card.title}
-                  className="rounded-3xl border border-white/10 bg-white/[0.03] p-5"
-                >
-                  <div className="font-medium text-white">{card.title}</div>
-                  <p className="mt-2 text-sm leading-7 text-slate-400">{card.description}</p>
-                </div>
-              ))}
-            </div>
-          </Card>
-
-          <Card id="security" className="rounded-[2rem] p-8 md:p-10">
-            <SectionHeading
-              eyebrow="Confidential Transactions"
-              title="Private payments without a cryptography-first user experience"
-              description="Confidential settlement is important, but it should feel like infrastructure. Velum keeps balances and service payments protected while developers interact with SDKs, APIs, and dashboards."
-            />
-            <div className="mt-10 grid gap-4">
-              {privacyCards.map((card) => (
-                <div
-                  key={card.title}
-                  className="rounded-3xl border border-white/10 bg-white/[0.03] p-5"
-                >
-                  <div className="flex items-start gap-3">
-                    <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-sky-300" />
-                    <div>
-                      <div className="font-medium text-white">{card.title}</div>
-                      <p className="mt-2 text-sm leading-7 text-slate-400">
-                        {card.description}
-                      </p>
-                    </div>
+        <div className="mt-12 grid gap-px overflow-hidden rounded-[1.75rem] border border-white/10 bg-white/10 md:grid-cols-2 xl:grid-cols-4">
+          {steps.map((step, index) => {
+            const Icon = step.icon;
+            return (
+              <div key={step.title} className="bg-background p-8">
+                <div className="flex items-center justify-between">
+                  <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
+                    <Icon className="h-5 w-5 text-sky-300" />
                   </div>
+                  <span className="text-4xl font-semibold text-white/10">0{index + 1}</span>
                 </div>
-              ))}
+                <h3 className="mt-6 text-lg font-medium text-white">{step.title}</h3>
+                <p className="mt-3 text-sm leading-7 text-slate-400">{step.description}</p>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+
+      {/* The receipts */}
+      <section className="section-shell py-20">
+        <div className="grid gap-10 lg:grid-cols-[1fr_1fr] lg:items-center">
+          <div>
+            <SectionHeading
+              eyebrow="Real Cryptography, Running Today"
+              title="Most agent demos mock their payments. Velum doesn't."
+            />
+            <ul className="mt-8 space-y-4 text-sm leading-7 text-slate-300">
+              <li className="flex gap-3">
+                <ShieldCheck className="mt-1 h-4 w-4 shrink-0 text-emerald-300" />
+                Deposits, withdrawals, and transfers each verify an UltraHonk SNARK
+                against deployed on-chain verifiers before a single balance moves.
+              </li>
+              <li className="flex gap-3">
+                <ShieldCheck className="mt-1 h-4 w-4 shrink-0 text-emerald-300" />
+                Proofs are generated client-side in your browser — private keys and
+                plaintext balances never reach our servers.
+              </li>
+              <li className="flex gap-3">
+                <ShieldCheck className="mt-1 h-4 w-4 shrink-0 text-emerald-300" />
+                Open the block explorer during a payment: sender and receiver are
+                visible, the amount simply is not there.
+              </li>
+            </ul>
+          </div>
+          <Card className="rounded-[2rem] p-8">
+            <div className="text-xs uppercase tracking-wide text-slate-500">
+              What an observer sees on-chain
+            </div>
+            <div className="mt-4 space-y-3 font-mono text-xs leading-6">
+              <div className="rounded-xl border border-white/10 bg-slate-950/80 p-4">
+                <div className="text-slate-500">TransferConfidential</div>
+                <div className="text-slate-300">from: agent #7 → to: agent #11</div>
+                <div className="text-slate-300">token: WETH</div>
+                <div className="text-fuchsia-300">amount: — (private witness)</div>
+              </div>
+              <div className="rounded-xl border border-white/10 bg-slate-950/80 p-4">
+                <div className="text-slate-500">balance(agent #7)</div>
+                <div className="break-all text-slate-400">
+                  0x0afff4a58eec4ad025b7ffea6cd3ce83…
+                </div>
+                <div className="text-sky-300">decryptable only with the agent&apos;s key</div>
+              </div>
             </div>
           </Card>
         </div>
       </section>
 
-      <section className="section-shell py-20">
-        <div className="rounded-[2rem] border border-white/10 bg-white/[0.03] p-8 md:p-12">
+      {/* CTA */}
+      <section className="section-shell pb-24 pt-8">
+        <div className="rounded-[2rem] border border-white/10 bg-gradient-to-br from-sky-400/10 via-transparent to-fuchsia-400/10 p-8 md:p-12">
           <SectionHeading
-            eyebrow="Start Building"
-            title="Add programmable commerce to your AI services"
-            description="Use Velum to monetize existing agents, expose APIs as paid capabilities, enable confidential transactions, and participate in agent commerce through one SDK-first platform."
+            eyebrow="Start Now"
+            title="Give your agent a treasury its competitors can't read"
+            description="Create an account, register an agent, and run a confidential payment end-to-end on Arbitrum Sepolia — in minutes."
           />
           <div className="mt-10 flex flex-wrap gap-4">
             <Button size="lg" asChild>
-              <Link href="/docs">
-                Build with Velum
+              <Link href="/signup">
+                Create your first agent
                 <ArrowRight className="ml-2 h-4 w-4" />
               </Link>
             </Button>
             <Button size="lg" variant="secondary" asChild>
-              <Link href="/contact">Talk to the team</Link>
+              <Link href="/docs">Read the docs</Link>
             </Button>
           </div>
         </div>

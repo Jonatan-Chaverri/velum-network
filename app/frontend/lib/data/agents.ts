@@ -17,6 +17,9 @@ export type Agent = {
   description: string;
   category: string;
   publicKey: string;
+  erc8004AgentId?: string | null;
+  erc8004TxHash?: string | null;
+  erc8004Url?: string | null;
   createdAt: string;
   updatedAt: string;
   reputationScore?: number;

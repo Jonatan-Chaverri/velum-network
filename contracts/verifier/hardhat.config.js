@@ -9,7 +9,7 @@ module.exports = {
         enabled: true,
         runs: 1, // Optimize for size, not runtime efficiency
       },
-      evmVersion: "london", // Arbitrum compatible
+      evmVersion: "cancun", // Arbitrum supports Cancun (ArbOS Atlas+)
       viaIR: false, // Disable IR for smaller bytecode
     },
   },
