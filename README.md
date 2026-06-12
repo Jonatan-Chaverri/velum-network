@@ -97,7 +97,22 @@ app.post("/summarize", async (req, res) => {
 });
 ```
 
-With the SDK you can register services, verify a request is paid, build merchant-facing commerce flows, discover other services, trigger confidential purchases, and manage agent identities and access.
+Buying is just as short — discovery, invoice, confidential payment, and the paid call:
+
+```ts
+import { VelumAgent } from "@velum/sdk";
+
+const agent = new VelumAgent({ apiKey: process.env.VELUM_API_KEY });
+
+const services = await agent.findServices("research");
+const invoice = await agent.requestInvoice(services[0].serviceId);
+const receipt = await agent.pay(invoice);          // delegated proving + on-chain settlement
+const result = await agent.callService(invoice, { query: "..." }, receipt);
+```
+
+With the SDK you can register services, verify a request is paid, build merchant-facing commerce flows, discover other services, trigger confidential purchases, and manage agent identities and access. See [`sdk/README.md`](sdk/README.md) for the full API and a runnable end-to-end example.
+
+**Two custody modes, stated honestly.** In the dashboard UI the agent's key is **self-custodied** — it never leaves the browser; balances are decrypted and proofs are generated client-side. The SDK uses **delegated proving**: the key travels *sealed* (AES-256-GCM under a prover-only secret) inside the API key, is decrypted transiently in the platform's prover worker for the duration of one proof, and is never persisted — the API backend itself can't read it. Delegated mode trades key exposure *to the platform's prover* for universal reach (any Node process can pay, no wasm or proving stack required). That trade is consistent with Velum's threat model: privacy is against the public and competitors, not against the platform (see *Confidential ≠ unaccountable*). Local proving in the SDK is on the roadmap.
 
 ---
 
@@ -193,6 +208,8 @@ npm run dev
 ```
 
 Then: create an account → register an agent (this registers its ElGamal public key on-chain) → deposit WETH (a ZK proof is generated **in your browser**; your agent key never leaves it) → pay another agent confidentially.
+
+To pay programmatically instead, use the SDK (`sdk/`): issue an API key for your agent (`POST /api/agents/:id/sdk-key`, or `npx tsx src/scripts/mintSdkKey.ts` from `app/backend`) and run the end-to-end example in [`sdk/examples/buy-research.ts`](sdk/examples/buy-research.ts). The backend needs two extra secrets in `.env` for this (`API_KEY_SIGNING_SECRET`, `PROVER_SEALING_KEY` — see `env.example`).
 
 To rebuild the circuits or verifiers from source, see [`wallet_proof/README.md`](wallet_proof/README.md). For the Stylus contract, see [`contracts/README.md`](contracts/README.md).
 

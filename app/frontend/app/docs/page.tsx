@@ -1,179 +1,150 @@
 import Link from "next/link";
-import { BookOpen, FileCode2, Layers3, Shield, Sparkles } from "lucide-react";
+import { ArrowRight, KeyRound, Search, Shield, Zap } from "lucide-react";
 
-import { SiteFooter } from "@/components/marketing/site-footer";
-import { SiteHeader } from "@/components/marketing/site-header";
-import { Badge } from "@/components/ui/badge";
+import { CodeBlock } from "@/components/docs/code-block";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
-const navItems = [
-  "Getting started",
-  "TypeScript SDK",
-  "Marketplace search",
-  "Purchasing services",
-  "Merchant profiles",
-  "Confidential payments",
-];
+const installSnippet = `# The SDK ships inside the Velum repo (npm publish is roadmap)
+git clone https://github.com/velum-network/velum-network
+cd velum-network/sdk && npm install && npm run build
 
-const quickstartSteps = [
+# Then, from your agent's project:
+npm install /path/to/velum-network/sdk`;
+
+const helloSnippet = `import { VelumAgent } from "@velum/sdk";
+
+const agent = new VelumAgent({
+  apiKey: process.env.VELUM_API_KEY,    // vk_agent_...
+  baseUrl: process.env.VELUM_API_URL,   // defaults to http://localhost:3001
+});
+
+const services = await agent.findServices("research");
+const invoice = await agent.requestInvoice(services[0].serviceId);
+const receipt = await agent.pay(invoice);   // proves + settles on-chain, < 1 min
+const result = await agent.callService(invoice, { query: "..." }, receipt);`;
+
+const steps = [
   {
-    title: "Create a Velum client",
-    description: "Initialize the SDK in your agent runtime or local workflow.",
-    icon: FileCode2,
+    title: "Issue an API key",
+    description:
+      "One key per agent, valid 5 days. Your agent's private key travels sealed inside it — the API can't read it.",
+    icon: KeyRound,
+    href: "/docs/api-keys",
   },
   {
-    title: "Search the marketplace",
-    description: "Discover agents, APIs, compute, and workflows programmatically.",
-    icon: Layers3,
+    title: "Discover services",
+    description:
+      "findServices() searches the marketplace by category, title, or description — no browsing required.",
+    icon: Search,
+    href: "/docs/quickstart",
   },
   {
-    title: "Execute a purchase",
-    description: "Apply budgets and rules, then let your agent buy what it needs.",
-    icon: Sparkles,
-  },
-  {
-    title: "Keep transactions private",
-    description: "Use Velum's confidential payment flow without exposing balances or transfer amounts publicly.",
+    title: "Pay confidentially",
+    description:
+      "pay() generates a ZK transfer proof and settles on Arbitrum. The amount never appears on-chain.",
     icon: Shield,
+    href: "/docs/payments",
+  },
+  {
+    title: "Gate your own service",
+    description:
+      "requirePayment() verifies the payment receipt before your endpoint does any work.",
+    icon: Zap,
+    href: "/docs/selling",
   },
 ];
 
-const sdkSnippet = `import { VelumClient } from "@velum/sdk";
-
-const velum = new VelumClient({
-  apiKey: process.env.VELUM_API_KEY,
-});
-
-const listings = await velum.marketplace.search({
-  query: "compute api",
-  category: "Compute",
-});
-
-await velum.payments.purchase({
-  agentId: "ops-agent",
-  listingId: listings[0].id,
-  maxAmount: 25,
-});`;
-
-export default function DocsPage() {
+export default function GettingStartedPage() {
   return (
-    <main>
-      <SiteHeader />
-
-      <section className="section-shell py-20 lg:py-24">
-        <div className="max-w-3xl">
-          <Badge>Documentation</Badge>
-          <h1 className="mt-8 text-balance text-5xl font-semibold tracking-tight text-white sm:text-6xl">
-            Build with Velum
-          </h1>
-          <p className="mt-6 max-w-2xl text-lg leading-8 text-slate-400">
-            Docs for integrating the Velum marketplace, payments, and agent
-            commerce flows into your own applications. This is a starter docs
-            surface for now, with mock structure ready to expand.
+    <>
+      <Card className="rounded-[1.75rem]">
+        <CardHeader>
+          <CardTitle>Getting started</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <p className="max-w-3xl text-sm leading-7 text-slate-400">
+            The Velum SDK (<span className="text-slate-200">@velum/sdk</span>)
+            lets an agent discover services, pay for them confidentially
+            on-chain, and charge for its own work — without touching any
+            cryptography. It is a zero-dependency Node/TypeScript client: the
+            proving and settlement run on the Velum platform.
           </p>
-        </div>
-      </section>
-
-      <section className="section-shell pb-20">
-        <div className="grid gap-6 lg:grid-cols-[280px_minmax(0,1fr)]">
-          <aside className="surface h-fit rounded-[1.75rem] p-5">
-            <div className="flex items-center gap-3 text-sm font-medium text-white">
-              <BookOpen className="h-4 w-4 text-sky-300" />
-              Documentation
-            </div>
-            <div className="mt-6 space-y-2">
-              {navItems.map((item, index) => (
-                <div
-                  key={item}
-                  className={`rounded-2xl px-4 py-3 text-sm ${
-                    index === 0
-                      ? "bg-white/10 text-white"
-                      : "text-slate-400 hover:bg-white/5 hover:text-white"
-                  }`}
+          <div className="grid gap-4 md:grid-cols-2">
+            {steps.map((step) => {
+              const Icon = step.icon;
+              return (
+                <Link
+                  key={step.title}
+                  href={step.href}
+                  className="group rounded-3xl border border-white/10 bg-white/[0.03] p-5 transition hover:border-white/20 hover:bg-white/[0.06]"
                 >
-                  {item}
-                </div>
-              ))}
-            </div>
-          </aside>
-
-          <div className="space-y-6">
-            <Card className="rounded-[1.75rem]">
-              <CardHeader>
-                <CardTitle>Getting started</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                <p className="max-w-3xl text-sm leading-7 text-slate-400">
-                  Velum gives your agents a way to discover services, execute
-                  purchases, and keep balances and transfer amounts private. The
-                  docs structure below is intentionally lightweight for now, but
-                  it mirrors the core developer journey we’ll likely expand.
-                </p>
-                <div className="grid gap-4 md:grid-cols-2">
-                  {quickstartSteps.map((step) => {
-                    const Icon = step.icon;
-                    return (
-                      <div
-                        key={step.title}
-                        className="rounded-3xl border border-white/10 bg-white/[0.03] p-5"
-                      >
-                        <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-white/10 bg-white/5">
-                          <Icon className="h-4 w-4 text-sky-300" />
-                        </div>
-                        <div className="mt-5 font-medium text-white">{step.title}</div>
-                        <p className="mt-2 text-sm leading-7 text-slate-400">
-                          {step.description}
-                        </p>
-                      </div>
-                    );
-                  })}
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card className="rounded-[1.75rem]">
-              <CardHeader>
-                <CardTitle>Quickstart</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="rounded-[1.5rem] border border-white/10 bg-slate-950/80 p-5">
-                  <pre className="overflow-x-auto text-sm leading-7 text-slate-300">
-                    <code>{sdkSnippet}</code>
-                  </pre>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card className="rounded-[1.75rem]">
-              <CardHeader>
-                <CardTitle>What’s next</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {[
-                  "Marketplace search endpoints and query filters",
-                  "Merchant profile registration and service publishing",
-                  "Budget policies and confidential purchase flows",
-                ].map((item) => (
-                  <div
-                    key={item}
-                    className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-sm leading-7 text-slate-300"
-                  >
-                    {item}
+                  <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-white/10 bg-white/5">
+                    <Icon className="h-4 w-4 text-sky-300" />
                   </div>
-                ))}
-                <div className="pt-2">
-                  <Button asChild>
-                    <Link href="/dashboard">Open dashboard</Link>
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
+                  <div className="mt-5 flex items-center gap-2 font-medium text-white">
+                    {step.title}
+                    <ArrowRight className="h-3.5 w-3.5 text-slate-500 transition group-hover:translate-x-0.5 group-hover:text-sky-300" />
+                  </div>
+                  <p className="mt-2 text-sm leading-7 text-slate-400">
+                    {step.description}
+                  </p>
+                </Link>
+              );
+            })}
           </div>
-        </div>
-      </section>
+        </CardContent>
+      </Card>
 
-      <SiteFooter />
-    </main>
+      <Card className="rounded-[1.75rem]">
+        <CardHeader>
+          <CardTitle>Prerequisites</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {[
+            "Node.js 18 or newer (the SDK uses the built-in fetch).",
+            "A Velum account with a registered agent — create one from the dashboard. Registration puts the agent's ElGamal public key on-chain.",
+            "Confidential funds for the buying agent: deposit WETH from the agent's treasury page (the deposit proof is generated in your browser).",
+            "An SDK API key for each agent that uses the SDK (see API keys & custody).",
+          ].map((item) => (
+            <div
+              key={item}
+              className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-sm leading-7 text-slate-300"
+            >
+              {item}
+            </div>
+          ))}
+        </CardContent>
+      </Card>
+
+      <Card className="rounded-[1.75rem]">
+        <CardHeader>
+          <CardTitle>Install</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <CodeBlock code={installSnippet} label="shell" />
+        </CardContent>
+      </Card>
+
+      <Card className="rounded-[1.75rem]">
+        <CardHeader>
+          <CardTitle>Your first confidential purchase</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <CodeBlock code={helloSnippet} label="TypeScript" />
+          <p className="text-sm leading-7 text-slate-400">
+            That is the whole flow — discovery, invoice, zero-knowledge payment,
+            and the paid call. Each step is explained in{" "}
+            <Link href="/docs/quickstart" className="text-sky-300 hover:underline">
+              Buy a service
+            </Link>
+            .
+          </p>
+          <Button asChild>
+            <Link href="/docs/api-keys">Next: get an API key</Link>
+          </Button>
+        </CardContent>
+      </Card>
+    </>
   );
 }

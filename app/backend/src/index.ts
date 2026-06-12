@@ -10,6 +10,7 @@ import deleteUserRoutes from './routes/deleteUser';
 import authRoutes from './routes/auth';
 import agentsRoutes from './routes/agents';
 import marketplaceRoutes from './routes/marketplace';
+import sdkRoutes from './routes/sdk';
 
 dotenv.config();
 
@@ -34,6 +35,7 @@ app.use('/api/deleteUser', deleteUserRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/agents', agentsRoutes);
 app.use('/api/marketplace', marketplaceRoutes);
+app.use('/api/sdk', sdkRoutes);
 
 // Health check
 app.get('/health', (req, res) => {

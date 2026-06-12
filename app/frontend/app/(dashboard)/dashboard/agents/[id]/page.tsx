@@ -6,6 +6,9 @@ import {
   AlertTriangle,
   ArrowDownToLine,
   ArrowUpFromLine,
+  Check,
+  Code2,
+  Copy,
   Eye,
   EyeOff,
   KeyRound,
@@ -158,6 +161,11 @@ export default function AgentDetailsPage() {
   const [withdrawSuccess, setWithdrawSuccess] = useState<string | null>(null);
   const [balanceToken, setBalanceToken] = useState<string | null>(null);
   const [encryptedBalance, setEncryptedBalance] = useState<number[] | null>(null);
+  const [isGeneratingSdkKey, setIsGeneratingSdkKey] = useState(false);
+  const [sdkKey, setSdkKey] = useState<string | null>(null);
+  const [sdkKeyExpiresAt, setSdkKeyExpiresAt] = useState<string | null>(null);
+  const [sdkKeyError, setSdkKeyError] = useState<string | null>(null);
+  const [sdkKeyCopied, setSdkKeyCopied] = useState(false);
 
   const isValidDepositAmount =
     /^(?:0|[1-9]\d*)(?:\.\d{0,3})?$/.test(depositAmount) &&
@@ -238,6 +246,10 @@ export default function AgentDetailsPage() {
     setDepositSuccess(null);
     setWithdrawError(null);
     setWithdrawSuccess(null);
+    setSdkKey(null);
+    setSdkKeyExpiresAt(null);
+    setSdkKeyError(null);
+    setSdkKeyCopied(false);
   }, [agent]);
 
   useEffect(() => {
@@ -319,6 +331,74 @@ export default function AgentDetailsPage() {
       );
     } finally {
       setIsLoadingBalance(false);
+    }
+  }
+
+  async function handleGenerateSdkKey() {
+    if (!agent) {
+      return;
+    }
+
+    if (!privateKeyInput.trim()) {
+      setSdkKeyError("Unlock the treasury first — the SDK key seals this agent's private key.");
+      return;
+    }
+
+    setIsGeneratingSdkKey(true);
+    setSdkKeyError(null);
+
+    try {
+      const accessToken = getAccessTokenCookie();
+      if (!accessToken) {
+        throw new Error("You must be signed in to issue an SDK API key.");
+      }
+
+      const response = await fetch(`${API_URL}/api/agents/${agent.id}/sdk-key`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ privateKey: privateKeyInput.trim() }),
+      });
+
+      const data = (await response.json().catch(() => ({}))) as {
+        success?: boolean;
+        error?: string;
+        apiKey?: string;
+        expiresAt?: string;
+      };
+
+      if (!response.ok || !data.success || !data.apiKey) {
+        throw new Error(data.error || "Failed to issue the SDK API key.");
+      }
+
+      setSdkKey(data.apiKey);
+      setSdkKeyExpiresAt(data.expiresAt ?? null);
+      setSdkKeyCopied(false);
+    } catch (sdkKeyFlowError) {
+      console.error("[agent-sdk-key] issuance failed", sdkKeyFlowError);
+      setSdkKeyError(
+        sdkKeyFlowError instanceof Error
+          ? sdkKeyFlowError.message
+          : "Failed to issue the SDK API key.",
+      );
+    } finally {
+      setIsGeneratingSdkKey(false);
+    }
+  }
+
+  async function handleCopySdkKey() {
+    if (!sdkKey) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(sdkKey);
+      setSdkKeyCopied(true);
+      setTimeout(() => setSdkKeyCopied(false), 2000);
+    } catch {
+      setSdkKeyError("Could not copy to the clipboard — select the key manually.");
     }
   }
 
@@ -890,6 +970,90 @@ export default function AgentDetailsPage() {
               </div>
             </div>
           )}
+        </CardContent>
+      </Card>
+
+      {/* ── SDK access: pay & charge programmatically ── */}
+      <Card className="rounded-[1.75rem]">
+        <CardHeader className="border-b border-white/5">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="rounded-2xl border border-white/10 bg-white/5 p-3 text-sky-300">
+                <Code2 className="h-5 w-5" />
+              </div>
+              <div>
+                <CardTitle>SDK access</CardTitle>
+                <p className="mt-1 text-sm text-slate-400">
+                  Let this agent pay and charge programmatically with{" "}
+                  <span className="text-slate-200">@velum/sdk</span>.
+                </p>
+              </div>
+            </div>
+            <a
+              href="/docs"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-sm text-sky-300 underline-offset-4 hover:underline"
+            >
+              View the docs ↗
+            </a>
+          </div>
+        </CardHeader>
+
+        <CardContent className="pt-6">
+          {sdkKey ? (
+            <div className="space-y-4">
+              <div className="rounded-2xl border border-amber-400/30 bg-amber-400/10 p-4 text-sm text-amber-100">
+                Copy this key now — it is shown <span className="font-semibold">only once</span>{" "}
+                and cannot be retrieved again
+                {sdkKeyExpiresAt ? ` (expires ${formatDate(sdkKeyExpiresAt)})` : ""}. Store it as{" "}
+                <code className="rounded bg-white/10 px-1.5 py-0.5 text-xs">VELUM_API_KEY</code>.
+              </div>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
+                <div className="min-w-0 flex-1 break-all rounded-2xl border border-white/10 bg-slate-950/80 p-4 font-mono text-xs leading-6 text-slate-200">
+                  {sdkKey}
+                </div>
+                <Button type="button" variant="secondary" onClick={() => void handleCopySdkKey()}>
+                  {sdkKeyCopied ? (
+                    <>
+                      <Check className="mr-2 h-3.5 w-3.5 text-emerald-300" /> Copied
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="mr-2 h-3.5 w-3.5" /> Copy
+                    </>
+                  )}
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <p className="max-w-2xl text-sm leading-6 text-slate-400">
+                Issues a 5-day API key for this agent. Your private key is sealed inside it
+                (AES-256-GCM) so the platform&apos;s prover can pay on the agent&apos;s behalf —
+                it is decrypted only in memory, never stored.
+                {!isUnlocked ? (
+                  <span className="mt-1 block text-amber-200/90">
+                    Unlock the treasury above first — the key is needed to issue SDK access.
+                  </span>
+                ) : null}
+              </p>
+              <Button
+                type="button"
+                onClick={() => void handleGenerateSdkKey()}
+                disabled={!isUnlocked || isGeneratingSdkKey}
+              >
+                <KeyRound className="mr-2 h-3.5 w-3.5" />
+                {isGeneratingSdkKey ? "Generating..." : "Generate API key"}
+              </Button>
+            </div>
+          )}
+
+          {sdkKeyError ? (
+            <div className="mt-4 rounded-2xl border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-200">
+              {sdkKeyError}
+            </div>
+          ) : null}
         </CardContent>
       </Card>
 

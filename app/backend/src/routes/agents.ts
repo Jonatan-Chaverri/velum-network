@@ -5,32 +5,20 @@ import jwt from 'jsonwebtoken';
 import { AuthRepository } from '../auth/repositories/authRepository';
 import { TokenPayload } from '../auth/utils/tokens';
 import { buildRegisterAgentTransaction } from '../lib/agentRegistration';
-import { getConfidentialErc20Address, getWethTokenAddress } from '../lib/contracts';
+import {
+  loadEncryptedBalanceFromChain,
+  submitConfidentialTransfer,
+} from '../lib/confidentialTransfer';
+import { getConfidentialErc20Address } from '../lib/contracts';
 import { prisma } from '../lib/prisma';
+import { createAgentApiKey } from '../lib/sdkKeys';
 import {
   getErc8004RegistryAddress,
   getErc8004ExplorerUrl,
   registerAgentErc8004,
 } from '../services/erc8004';
 
-const { decodeFunctionResult, encodeFunctionData, parseAbi } = require('viem');
-const { createPublicClient, createWalletClient, http } = require('viem');
-const { privateKeyToAccount } = require('viem/accounts');
-const { arbitrumSepolia } = require('viem/chains');
-
 const router = express.Router();
-const confidentialErc20ReadAbi = parseAbi([
-  'function balanceOfEnc(address token, uint32 agent_id) view returns (uint8[128])',
-]);
-const confidentialErc20WriteAbi = parseAbi([
-  // Stylus exports snake_case Rust methods as camelCase in the ABI - the
-  // on-chain selector is keccak("transferConfidential(uint8[],bytes)").
-  'function transferConfidential(uint8[] proof_inputs, bytes proof)',
-]);
-
-const DEFAULT_FALLBACK_GAS_LIMIT = BigInt(8_000_000);
-const DEFAULT_MAX_PRIORITY_FEE_PER_GAS_WEI = BigInt(20_000_000);
-const DEFAULT_MIN_MAX_FEE_PER_GAS_WEI = BigInt(100_000_000);
 
 type CreateAgentBody = {
   agentId?: string | number;
@@ -85,120 +73,6 @@ function isValidUrl(value: string) {
   } catch {
     return false;
   }
-}
-
-function bytesToHex(bytes: number[]) {
-  return `0x${bytes.map((value) => value.toString(16).padStart(2, '0')).join('')}`;
-}
-
-async function loadEncryptedBalanceFromChain(agentId: bigint) {
-  const rpcUrl = process.env.RPC_URL;
-  if (!rpcUrl) {
-    throw new Error('RPC_URL environment variable is not set');
-  }
-
-  const confidentialErc20Address = getConfidentialErc20Address() as `0x${string}`;
-  const wethTokenAddress = getWethTokenAddress() as `0x${string}`;
-
-  const data = encodeFunctionData({
-    abi: confidentialErc20ReadAbi,
-    functionName: 'balanceOfEnc',
-    args: [wethTokenAddress, Number(agentId)],
-  });
-
-  const rpcResponse = await fetch(rpcUrl, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      jsonrpc: '2.0',
-      id: 1,
-      method: 'eth_call',
-      params: [
-        {
-          to: confidentialErc20Address,
-          data,
-        },
-        'latest',
-      ],
-    }),
-  });
-
-  const rpcPayload = await rpcResponse.json() as {
-    result?: `0x${string}`;
-    error?: { message?: string };
-  };
-
-  if (!rpcResponse.ok || rpcPayload.error || !rpcPayload.result) {
-    throw new Error(rpcPayload.error?.message || 'Failed to read encrypted balance on-chain');
-  }
-
-  const balance = decodeFunctionResult({
-    abi: confidentialErc20ReadAbi,
-    functionName: 'balanceOfEnc',
-    data: rpcPayload.result,
-  });
-
-  return {
-    token: wethTokenAddress,
-    network: process.env.NETWORK ?? 'SEPOLIA',
-    encrypted: Array.from(balance as readonly bigint[], (value) => Number(value)),
-  };
-}
-
-async function getServerTransactionFeeConfig(
-  publicClient: any,
-  request: { account: `0x${string}`; to: `0x${string}`; data: `0x${string}` },
-) {
-  let gasLimit = DEFAULT_FALLBACK_GAS_LIMIT;
-
-  try {
-    const estimatedGas = await publicClient.estimateGas(request);
-    gasLimit = (estimatedGas * BigInt(12)) / BigInt(10);
-  } catch (estimateError) {
-    console.error(
-      '[agents.transfer] eth_estimateGas failed, using fallback gas limit:',
-      estimateError,
-    );
-  }
-
-  let maxPriorityFeePerGas = DEFAULT_MAX_PRIORITY_FEE_PER_GAS_WEI;
-
-  try {
-    const suggestedPriorityFee = await publicClient.request({
-      method: 'eth_maxPriorityFeePerGas',
-    }) as `0x${string}`;
-
-    maxPriorityFeePerGas = BigInt(suggestedPriorityFee);
-  } catch (priorityFeeError) {
-    console.warn(
-      '[agents.transfer] priority fee fetch failed, using fallback priority fee:',
-      priorityFeeError,
-    );
-  }
-
-  let baseFeePerGas = BigInt(0);
-
-  try {
-    const latestBlock = await publicClient.getBlock({ blockTag: 'latest' });
-    if (latestBlock.baseFeePerGas) {
-      baseFeePerGas = latestBlock.baseFeePerGas;
-    }
-  } catch (baseFeeError) {
-    console.warn('[agents.transfer] base fee fetch failed, using fallback fee floor:', baseFeeError);
-  }
-
-  const maxFeePerGas = baseFeePerGas > BigInt(0)
-    ? (baseFeePerGas * BigInt(2)) + maxPriorityFeePerGas
-    : DEFAULT_MIN_MAX_FEE_PER_GAS_WEI;
-
-  return {
-    gas: gasLimit,
-    maxFeePerGas,
-    maxPriorityFeePerGas,
-    baseFeePerGas,
-  };
 }
 
 function formatAgentResponse(agent: {
@@ -519,64 +393,15 @@ router.post('/transfer', async (req, res, next) => {
       return res.status(404).json({ error: 'Receiver agent not found' });
     }
 
-    const rpcUrl = process.env.RPC_URL;
-    const privateKey = process.env.ACCOUNT_PRIVATE_KEY as `0x${string}` | undefined;
-    if (!rpcUrl || !privateKey) {
-      return res.status(500).json({
-        error: 'RPC_URL and ACCOUNT_PRIVATE_KEY must be configured for confidential transfers',
-      });
-    }
-
-    const account = privateKeyToAccount(privateKey);
-    const confidentialErc20Address = getConfidentialErc20Address() as `0x${string}`;
-    const proofHex = bytesToHex(proof) as `0x${string}`;
-
-    const data = encodeFunctionData({
-      abi: confidentialErc20WriteAbi,
-      functionName: 'transferConfidential',
-      args: [proofInputs, proofHex],
+    const txHash = await submitConfidentialTransfer({
+      proofInputs,
+      proof,
+      logContext: {
+        route: 'agents.transfer',
+        senderAgentId: senderAgent.agentId.toString(),
+        receiverAgentId: receiverAgent.agentId.toString(),
+      },
     });
-
-    const publicClient = createPublicClient({
-      chain: arbitrumSepolia,
-      transport: http(rpcUrl),
-    });
-
-    const walletClient = createWalletClient({
-      account,
-      chain: arbitrumSepolia,
-      transport: http(rpcUrl),
-    });
-
-    const feeConfig = await getServerTransactionFeeConfig(publicClient, {
-      account: account.address,
-      to: confidentialErc20Address,
-      data,
-    });
-
-    console.log('[agents.transfer] submitting owner transaction', {
-      senderAgentId: senderAgent.agentId.toString(),
-      receiverAgentId: receiverAgent.agentId.toString(),
-      gas: feeConfig.gas.toString(),
-      baseFeePerGas: feeConfig.baseFeePerGas.toString(),
-      maxFeePerGas: feeConfig.maxFeePerGas.toString(),
-      maxPriorityFeePerGas: feeConfig.maxPriorityFeePerGas.toString(),
-    });
-
-    const txHash = await walletClient.sendTransaction({
-      account,
-      to: confidentialErc20Address,
-      data,
-      gas: feeConfig.gas,
-      maxFeePerGas: feeConfig.maxFeePerGas,
-      maxPriorityFeePerGas: feeConfig.maxPriorityFeePerGas,
-    });
-
-    const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
-
-    if (receipt.status !== 'success') {
-      throw new Error('Transfer transaction reverted on-chain');
-    }
 
     await prisma.transaction.create({
       data: {
@@ -591,6 +416,67 @@ router.post('/transfer', async (req, res, next) => {
     return res.status(200).json({
       success: true,
       txHash,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Issues an SDK API key for one of the caller's agents. The browser sends the
+// agent's ElGamal private key (it already holds it when the treasury is
+// unlocked); we seal it under PROVER_SEALING_KEY and embed it in the
+// capability token. Nothing is persisted — the key is shown exactly once.
+router.post('/:id/sdk-key', async (req, res, next) => {
+  try {
+    const userId = await getAuthenticatedUserId(req, res);
+
+    if (!userId) {
+      return;
+    }
+
+    const { privateKey } = req.body as { privateKey?: string };
+
+    if (!privateKey?.trim()) {
+      return res.status(400).json({ error: 'privateKey is required' });
+    }
+
+    let parsedKey: bigint;
+
+    try {
+      parsedKey = BigInt(privateKey.trim());
+    } catch {
+      return res.status(400).json({ error: 'privateKey must be a hex or decimal scalar' });
+    }
+
+    if (parsedKey <= 0n) {
+      return res.status(400).json({ error: 'privateKey must be a positive scalar' });
+    }
+
+    const agent = await prisma.agent.findFirst({
+      where: {
+        id: req.params.id,
+        userId,
+      },
+      select: {
+        id: true,
+        agentId: true,
+      },
+    });
+
+    if (!agent) {
+      return res.status(404).json({ error: 'Agent not found' });
+    }
+
+    const { apiKey, expiresAt } = createAgentApiKey({
+      agentId: agent.id,
+      onchainAgentId: agent.agentId.toString(),
+      privateKey: privateKey.trim(),
+    });
+
+    return res.status(201).json({
+      success: true,
+      apiKey,
+      expiresAt,
     });
   } catch (error) {
     next(error);
