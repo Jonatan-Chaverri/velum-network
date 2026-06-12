@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, type ReactNode } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import {
   AlertTriangle,
   ArrowDownToLine,
@@ -14,6 +14,7 @@ import {
   KeyRound,
   LockKeyhole,
   RefreshCw,
+  Trash2,
   Wallet,
 } from "lucide-react";
 
@@ -134,6 +135,7 @@ function WalletGate({
 
 export default function AgentDetailsPage() {
   const params = useParams<{ id: string }>();
+  const router = useRouter();
   const {
     address,
     config,
@@ -166,6 +168,11 @@ export default function AgentDetailsPage() {
   const [sdkKeyExpiresAt, setSdkKeyExpiresAt] = useState<string | null>(null);
   const [sdkKeyError, setSdkKeyError] = useState<string | null>(null);
   const [sdkKeyCopied, setSdkKeyCopied] = useState(false);
+  const [isTogglingService, setIsTogglingService] = useState(false);
+  const [serviceToggleError, setServiceToggleError] = useState<string | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   const isValidDepositAmount =
     /^(?:0|[1-9]\d*)(?:\.\d{0,3})?$/.test(depositAmount) &&
@@ -678,6 +685,96 @@ export default function AgentDetailsPage() {
     }
   }
 
+  async function handleToggleServiceVisibility() {
+    if (!agent?.service) {
+      return;
+    }
+
+    setIsTogglingService(true);
+    setServiceToggleError(null);
+
+    try {
+      const accessToken = getAccessTokenCookie();
+      if (!accessToken) {
+        throw new Error("You must be signed in to update the service.");
+      }
+
+      const nextStatus = agent.service.status === "online" ? "hidden" : "visible";
+
+      const response = await fetch(`${API_URL}/api/agents/${agent.id}/service`, {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ status: nextStatus }),
+      });
+
+      const data = (await response.json().catch(() => ({}))) as {
+        success?: boolean;
+        error?: string;
+        service?: Agent["service"];
+      };
+
+      if (!response.ok || !data.success || !data.service) {
+        throw new Error(data.error || "Failed to update the service visibility.");
+      }
+
+      setAgent((current) =>
+        current ? { ...current, service: data.service ?? current.service } : current,
+      );
+    } catch (toggleError) {
+      setServiceToggleError(
+        toggleError instanceof Error
+          ? toggleError.message
+          : "Failed to update the service visibility.",
+      );
+    } finally {
+      setIsTogglingService(false);
+    }
+  }
+
+  async function handleDeleteAgent() {
+    if (!agent) {
+      return;
+    }
+
+    setIsDeleting(true);
+    setDeleteError(null);
+
+    try {
+      const accessToken = getAccessTokenCookie();
+      if (!accessToken) {
+        throw new Error("You must be signed in to delete this agent.");
+      }
+
+      const response = await fetch(`${API_URL}/api/agents/${agent.id}`, {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+
+      const data = (await response.json().catch(() => ({}))) as {
+        success?: boolean;
+        error?: string;
+      };
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || "Failed to delete the agent.");
+      }
+
+      router.push("/dashboard/agents");
+    } catch (deleteFlowError) {
+      setDeleteError(
+        deleteFlowError instanceof Error
+          ? deleteFlowError.message
+          : "Failed to delete the agent.",
+      );
+      setIsDeleting(false);
+    }
+  }
+
   if (!agent && !error) {
     return (
       <div className="space-y-6">
@@ -1111,6 +1208,37 @@ export default function AgentDetailsPage() {
                   {agent.service.endpointUrl}
                 </InfoRow>
                 <InfoRow label="Listed since">{formatDate(agent.service.createdAt)}</InfoRow>
+                <div className="mt-4 flex flex-col gap-3 rounded-2xl border border-white/10 bg-white/[0.02] p-4 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="text-sm leading-6 text-slate-400">
+                    {agent.service.status === "online"
+                      ? "This service is visible in the marketplace."
+                      : "This service is hidden — other agents can't discover it."}
+                  </p>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => void handleToggleServiceVisibility()}
+                    disabled={isTogglingService}
+                  >
+                    {agent.service.status === "online" ? (
+                      <>
+                        <EyeOff className="mr-2 h-3.5 w-3.5" />
+                        {isTogglingService ? "Hiding..." : "Hide from marketplace"}
+                      </>
+                    ) : (
+                      <>
+                        <Eye className="mr-2 h-3.5 w-3.5" />
+                        {isTogglingService ? "Publishing..." : "Publish to marketplace"}
+                      </>
+                    )}
+                  </Button>
+                </div>
+                {serviceToggleError ? (
+                  <div className="mt-3 rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-200">
+                    {serviceToggleError}
+                  </div>
+                ) : null}
               </>
             ) : (
               <p className="py-3 text-sm leading-6 text-slate-400">
@@ -1121,6 +1249,62 @@ export default function AgentDetailsPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* ── Danger zone ── */}
+      <Card className="rounded-[1.75rem] border-rose-500/20">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base text-rose-200">Danger zone</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <p className="max-w-2xl text-sm leading-6 text-slate-400">
+              Deleting removes this agent from Velum — its profile, marketplace listing,
+              and SDK access. The on-chain registration is permanent, so{" "}
+              <span className="text-rose-200">withdraw any treasury funds first</span>:
+              you&apos;ll need the agent&apos;s private key to recover them later.
+            </p>
+            {confirmingDelete ? (
+              <div className="flex shrink-0 items-center gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  className="bg-rose-500/90 text-white hover:bg-rose-500"
+                  onClick={() => void handleDeleteAgent()}
+                  disabled={isDeleting}
+                >
+                  <Trash2 className="mr-2 h-3.5 w-3.5" />
+                  {isDeleting ? "Deleting..." : "Yes, delete it"}
+                </Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setConfirmingDelete(false)}
+                  disabled={isDeleting}
+                >
+                  Cancel
+                </Button>
+              </div>
+            ) : (
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                className="shrink-0 border-rose-500/30 text-rose-200 hover:bg-rose-500/10"
+                onClick={() => setConfirmingDelete(true)}
+              >
+                <Trash2 className="mr-2 h-3.5 w-3.5" />
+                Delete agent
+              </Button>
+            )}
+          </div>
+          {deleteError ? (
+            <div className="mt-4 rounded-2xl border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-200">
+              {deleteError}
+            </div>
+          ) : null}
+        </CardContent>
+      </Card>
     </div>
   );
 }

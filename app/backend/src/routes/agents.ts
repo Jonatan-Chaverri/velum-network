@@ -1,10 +1,8 @@
 import { BillingUnit, PricingModel, ServiceStatus } from '@prisma/client';
 import express from 'express';
-import jwt from 'jsonwebtoken';
 
-import { AuthRepository } from '../auth/repositories/authRepository';
-import { TokenPayload } from '../auth/utils/tokens';
 import { buildRegisterAgentTransaction } from '../lib/agentRegistration';
+import { getAuthenticatedUserId } from '../lib/authUser';
 import {
   loadEncryptedBalanceFromChain,
   submitConfidentialTransfer,
@@ -49,10 +47,6 @@ type TransferAgentBody = {
   token?: string;
   amount?: string;
 };
-
-if (!process.env.JWT_SECRET) {
-  throw new Error('JWT_SECRET environment variable is not set');
-}
 
 function mapPricingModel(
   value: NonNullable<NonNullable<CreateAgentBody['service']>['priceModel']>,
@@ -119,49 +113,6 @@ function formatAgentResponse(agent: {
         }
       : null,
   };
-}
-
-async function getAuthenticatedUserId(
-  req: express.Request,
-  res: express.Response,
-): Promise<string | null> {
-  const authorizationHeader = req.get('authorization');
-
-  if (!authorizationHeader?.startsWith('Bearer ')) {
-    res.status(401).json({ error: 'Authorization token is required' });
-    return null;
-  }
-
-  const token = authorizationHeader.slice('Bearer '.length).trim();
-
-  try {
-    const payload = jwt.verify(token, process.env.JWT_SECRET as string) as jwt.JwtPayload &
-      TokenPayload;
-
-    if (payload.type !== 'access' || !payload.sub || !payload.jti || !payload.sid) {
-      res.status(401).json({ error: 'Invalid access token' });
-      return null;
-    }
-
-    const session = await AuthRepository.findSessionByAccessTokenJti(payload.jti);
-
-    if (!session || session.id !== payload.sid || session.userId !== payload.sub) {
-      res.status(401).json({ error: 'Invalid session' });
-      return null;
-    }
-
-    if (session.revokedAt || session.expiresAt < new Date()) {
-      res.status(401).json({ error: 'Session expired or revoked' });
-      return null;
-    }
-
-    await AuthRepository.touchSession(session.id);
-
-    return payload.sub;
-  } catch {
-    res.status(401).json({ error: 'Invalid or expired access token' });
-    return null;
-  }
 }
 
 router.get('/', async (req, res, next) => {
@@ -535,6 +486,101 @@ router.get('/:id', async (req, res, next) => {
       success: true,
       agent: formatAgentResponse(agent),
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Show or hide the agent's marketplace service. Only the owner can toggle it.
+router.patch('/:id/service', async (req, res, next) => {
+  try {
+    const userId = await getAuthenticatedUserId(req, res);
+
+    if (!userId) {
+      return;
+    }
+
+    const { status } = req.body as { status?: 'visible' | 'hidden' };
+
+    if (status !== 'visible' && status !== 'hidden') {
+      return res.status(400).json({ error: "status must be 'visible' or 'hidden'" });
+    }
+
+    const agent = await prisma.agent.findFirst({
+      where: {
+        id: req.params.id,
+        userId,
+      },
+      select: {
+        id: true,
+        services: {
+          select: { id: true },
+          take: 1,
+          orderBy: { createdAt: 'desc' },
+        },
+      },
+    });
+
+    if (!agent) {
+      return res.status(404).json({ error: 'Agent not found' });
+    }
+
+    const [service] = agent.services;
+
+    if (!service) {
+      return res.status(400).json({ error: 'This agent does not sell a service' });
+    }
+
+    const updatedService = await prisma.service.update({
+      where: { id: service.id },
+      data: { status: mapServiceStatus(status) },
+    });
+
+    return res.status(200).json({
+      success: true,
+      service: {
+        ...updatedService,
+        price: String(updatedService.price),
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Deletes the agent's Velum workspace (metadata, service listing, reputation).
+// The on-chain registration is immutable and stays on Arbitrum Sepolia.
+router.delete('/:id', async (req, res, next) => {
+  try {
+    const userId = await getAuthenticatedUserId(req, res);
+
+    if (!userId) {
+      return;
+    }
+
+    const agent = await prisma.agent.findFirst({
+      where: {
+        id: req.params.id,
+        userId,
+      },
+      select: { id: true, agentId: true },
+    });
+
+    if (!agent) {
+      return res.status(404).json({ error: 'Agent not found' });
+    }
+
+    await prisma.agent.delete({
+      where: { id: agent.id },
+    });
+
+    console.log('[agents.delete] agent removed', {
+      userId,
+      agentDbId: agent.id,
+      agentId: agent.agentId.toString(),
+    });
+
+    return res.status(200).json({ success: true });
   } catch (error) {
     next(error);
   }

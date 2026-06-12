@@ -10,7 +10,7 @@ export function StatCard({
 }: {
   title: string;
   value: string;
-  change: string;
+  change?: string;
   description: string;
 }) {
   return (
@@ -18,10 +18,12 @@ export function StatCard({
       <CardHeader className="pb-4">
         <div className="flex items-start justify-between gap-4">
           <CardTitle className="text-base">{title}</CardTitle>
-          <span className="flex items-center gap-1 rounded-full bg-emerald-400/10 px-2.5 py-1 text-xs text-emerald-200">
-            <ArrowUpRight className="h-3.5 w-3.5" />
-            {change}
-          </span>
+          {change ? (
+            <span className="flex items-center gap-1 rounded-full bg-emerald-400/10 px-2.5 py-1 text-xs text-emerald-200">
+              <ArrowUpRight className="h-3.5 w-3.5" />
+              {change}
+            </span>
+          ) : null}
         </div>
       </CardHeader>
       <CardContent>

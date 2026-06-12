@@ -72,7 +72,11 @@ export function MarketplaceList() {
   return (
     <div className="grid gap-6 xl:grid-cols-2">
       {agents.map((agent) => (
-        <AgentCard key={agent.id} agent={agent} />
+        <AgentCard
+          key={agent.id}
+          agent={agent}
+          href={`/dashboard/marketplace/${agent.id}`}
+        />
       ))}
     </div>
   );

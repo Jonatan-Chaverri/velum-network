@@ -7,6 +7,7 @@ import type { Agent } from "@/lib/data/agents";
 import {
   convertAgentTransferPublicInputs,
   convertDisplayAmountToProofAmount,
+  convertProofAmountToErc20Amount,
   generateAgentTransferProof,
 } from "@/lib/utils/agent-private-features";
 import { decryptAgentBalance } from "@/lib/utils/agent-balance";
@@ -245,7 +246,8 @@ export function PaymentModal() {
           proofInputs: Array.from(packedPublicInputs),
           proof: Array.from(proof),
           token: senderBalance.token,
-          amount: proofAmount.toString(),
+          // Stored in wei so all transaction amounts share the same unit.
+          amount: convertProofAmountToErc20Amount(proofAmount).toString(),
           metadata,
         }),
       });

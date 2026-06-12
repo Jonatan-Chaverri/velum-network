@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Bell, Search, Wallet } from "lucide-react";
+import { Search, Wallet } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -95,9 +95,6 @@ export function DashboardTopbar({
               {isConnecting ? "Connecting..." : "Connect Wallet"}
             </Button>
           )}
-          <button className="flex h-11 w-11 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-slate-300 transition hover:text-white">
-            <Bell className="h-4 w-4" />
-          </button>
         </div>
         {error ? <p className="text-right text-xs text-amber-300">{error}</p> : null}
       </div>

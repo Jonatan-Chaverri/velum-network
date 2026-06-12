@@ -1,8 +1,83 @@
 import express from 'express';
 import { Prisma } from '@prisma/client';
+import { getAuthenticatedUserId } from '../lib/authUser';
 import { prisma } from '../lib/prisma';
 
 const router = express.Router();
+
+/**
+ * GET /api/transaction
+ * List the transactions involving the authenticated user's agents.
+ * Amounts are encrypted on-chain but visible here to the owner (stored in wei).
+ */
+router.get('/', async (req, res, next) => {
+  try {
+    const userId = await getAuthenticatedUserId(req, res);
+
+    if (!userId) {
+      return;
+    }
+
+    const agentSelection = {
+      select: {
+        id: true,
+        agentId: true,
+        title: true,
+        userId: true,
+      },
+    } as const;
+
+    const transactions = await prisma.transaction.findMany({
+      where: {
+        OR: [{ senderAgent: { userId } }, { receiverAgent: { userId } }],
+      },
+      select: {
+        id: true,
+        txHash: true,
+        type: true,
+        status: true,
+        token: true,
+        amount: true,
+        associatedWallet: true,
+        createdAt: true,
+        senderAgent: agentSelection,
+        receiverAgent: agentSelection,
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 200,
+    });
+
+    const formatParty = (
+      agent: { id: string; agentId: bigint; title: string; userId: string } | null,
+    ) =>
+      agent
+        ? {
+            id: agent.id,
+            agentId: agent.agentId.toString(),
+            title: agent.title,
+            isMine: agent.userId === userId,
+          }
+        : null;
+
+    return res.status(200).json({
+      success: true,
+      transactions: transactions.map((transaction) => ({
+        id: transaction.id,
+        txHash: transaction.txHash,
+        type: transaction.type,
+        status: transaction.status,
+        token: transaction.token,
+        amount: transaction.amount,
+        associatedWallet: transaction.associatedWallet,
+        createdAt: transaction.createdAt,
+        senderAgent: formatParty(transaction.senderAgent),
+        receiverAgent: formatParty(transaction.receiverAgent),
+      })),
+    });
+  } catch (error) {
+    next(error);
+  }
+});
 
 /**
  * POST /api/transaction

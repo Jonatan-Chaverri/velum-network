@@ -9,9 +9,9 @@ const mobileItems = [
   { href: "/dashboard", label: "Overview" },
   { href: "/dashboard/agents", label: "Agents" },
   { href: "/dashboard/marketplace", label: "Marketplace" },
-  { href: "/dashboard/payments", label: "Payments" },
+  { href: "/dashboard/transactions", label: "Transactions" },
   { href: "/dashboard/policies", label: "Policies" },
-  { href: "/dashboard/settings", label: "Settings" },
+  { href: "/dashboard/help", label: "Help" },
 ];
 
 export default function DashboardLayout({

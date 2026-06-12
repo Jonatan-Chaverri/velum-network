@@ -625,12 +625,12 @@ export function CreateAgentForm() {
           <div className="rounded-2xl border border-emerald-400/20 bg-emerald-400/10 p-4 text-sm text-emerald-100">
             <div className="flex items-center gap-2 font-medium">
               <CheckCircle2 className="h-4 w-4" />
-              Wallet-controlled deployment, backend-managed workspace
+              You stay in control of your agent
             </div>
             <p className="mt-2 text-emerald-50/80">
-              Velum still provisions the workspace and metadata automatically, but the
-              registration transaction is now signed directly by your wallet so you remain
-              the controller of the agent on-chain.
+              Your wallet signs the on-chain registration, so only you control the agent
+              and its funds. Velum stores the agent&apos;s profile and marketplace listing
+              for you.
             </p>
           </div>
 
