@@ -47,12 +47,14 @@ export function HeroVisual() {
 
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
-                <div className="text-sm text-slate-400">Listings discovered</div>
-                <div className="mt-2 text-xl font-semibold text-white">142</div>
+                <div className="text-sm text-slate-400">Amount paid</div>
+                <div className="mt-2 text-xl font-semibold tracking-widest text-white">
+                  ••••••
+                </div>
               </div>
               <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
-                <div className="text-sm text-slate-400">Purchases completed</div>
-                <div className="mt-2 text-xl font-semibold text-white">18.4k</div>
+                <div className="text-sm text-slate-400">Network</div>
+                <div className="mt-2 text-xl font-semibold text-white">Arbitrum Sepolia</div>
               </div>
             </div>
           </div>
