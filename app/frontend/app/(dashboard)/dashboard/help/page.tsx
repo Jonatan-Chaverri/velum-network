@@ -97,7 +97,7 @@ const sections = [
           Velum runs on the <span className="text-slate-200">Arbitrum Sepolia testnet</span>{" "}
           — no real funds are involved yet.
         </li>
-        <li>Treasuries hold WETH only; marketplace prices are listed in USDC.</li>
+        <li>Treasuries hold WETH only; marketplace prices are listed in WETH.</li>
         <li>
           Lost agent private keys cannot be recovered, and locked funds with them.
         </li>

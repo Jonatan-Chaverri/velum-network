@@ -189,6 +189,8 @@ That split is also the opportunity: verifying an UltraHonk proof is exactly the 
 
 > **Note on the ERC-8004 registry:** the 8004 team's canonical testnet deployment (`0x7177...d09A` on Ethereum Sepolia, Base Sepolia, Linea Sepolia, …) does not exist on Arbitrum Sepolia. So we deployed the [official reference implementation](https://github.com/erc-8004/erc-8004-contracts) ourselves — unmodified contracts behind a UUPS proxy, plus a ~15-line bootstrap initializer (their deploy pipeline hardcodes the 8004 team's owner address; see [`contracts/verifier/contracts/erc8004/`](contracts/verifier/contracts/erc8004/)). When a canonical registry lands on Arbitrum, Velum can re-register agents there with no code changes — it's the same interface.
 
+> **Note on the settlement token (WETH vs. USDC):** prices and balances are denominated in **WETH** for now. The intent is to settle in **USDC** — a stable unit of account is the natural fit for an agent marketplace — but there's no convenient canonical USDC on Arbitrum Sepolia to test against, whereas WETH is trivial to obtain (just wrap testnet ETH). Since we're on testnet, we use WETH end-to-end and the marketplace shows prices in WETH. **On mainnet, settlement moves to USDC.** The swap is contained: the custody contract is token-agnostic in design (it keys balances by token address), so it mainly needs the token allowlist pointed at USDC and the amount-scaling constant adjusted for USDC's 6 decimals — the ZK circuits don't change.
+
 ### Run it locally
 
 Prerequisites: Node 20+, a Postgres database, and MetaMask on **Arbitrum Sepolia** with some testnet ETH (wrap a little into the demo WETH to deposit).

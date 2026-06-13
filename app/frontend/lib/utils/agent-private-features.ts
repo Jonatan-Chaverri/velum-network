@@ -2,9 +2,12 @@
 
 import { UltraHonkBackend } from "@aztec/bb.js";
 import { Noir, type InputMap } from "@noir-lang/noir_js";
-import depositCircuit from "../../../../wallet_proof/target/deposit.json";
-import transferCircuit from "../../../../wallet_proof/target/transfer.json";
-import withdrawCircuit from "../../../../wallet_proof/target/withdraw.json";
+// Circuits are vendored into the app (lib/circuits) so the build doesn't depend
+// on the gitignored wallet_proof/target dir. Re-copy them after recompiling the
+// circuits — see app/frontend/lib/circuits/README.md.
+import depositCircuit from "../circuits/deposit.json";
+import transferCircuit from "../circuits/transfer.json";
+import withdrawCircuit from "../circuits/withdraw.json";
 
 export const AGENT_TOKEN_DECIMALS = 12;
 export const ERC20_TRANSFER_SCALE = BigInt(1_000_000);

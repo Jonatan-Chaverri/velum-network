@@ -28,7 +28,7 @@ const categoryOptions = [
 ] as const;
 
 const priceModelOptions = ["per response", "subscription"] as const;
-const currencyOptions = ["USDC"] as const;
+const currencyOptions = ["WETH"] as const;
 const statusOptions = ["visible", "hidden"] as const;
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 
@@ -64,7 +64,7 @@ const initialForm: FormState = {
   sellsServices: false,
   price: "",
   priceModel: "per response",
-  currency: "USDC",
+  currency: "WETH",
   endpointUrl: "",
   status: "visible",
 };

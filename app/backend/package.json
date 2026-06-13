@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
+    "sync-circuits": "cp ../../wallet_proof/target/transfer.json ../../wallet_proof/target/deposit.json circuits/",
     "start": "node dist/index.js",
     "type-check": "tsc --noEmit",
     "migrate": "tsx src/scripts/runMigrations.ts",

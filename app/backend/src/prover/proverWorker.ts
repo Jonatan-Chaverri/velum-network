@@ -28,11 +28,13 @@ const { UltraHonkBackend } = require('@aztec/bb.js');
 type ProofPoint = { x: string; y: string };
 
 function resolveTransferCircuitPath() {
-  // src/prover and dist/prover are both two directories below app/backend, so
-  // the same relative hop reaches velum-network/wallet_proof in dev and prod.
+  // The circuit is vendored into app/backend/circuits so a deploy doesn't depend
+  // on the gitignored wallet_proof/target dir. src/prover and dist/prover are
+  // both two directories below app/backend, so ../../circuits resolves in dev
+  // and prod alike. Re-copy after recompiling — see app/backend/circuits/README.md.
   return (
     process.env.TRANSFER_CIRCUIT_PATH ||
-    path.resolve(__dirname, '../../../../wallet_proof/target/transfer.json')
+    path.resolve(__dirname, '../../circuits/transfer.json')
   );
 }
 

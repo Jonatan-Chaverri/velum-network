@@ -216,7 +216,7 @@ async function main() {
   console.log('Generating deposit proof (~30-60s)...');
   const circuitPath =
     process.env.DEPOSIT_CIRCUIT_PATH ||
-    path.resolve(__dirname, '../../../../wallet_proof/target/deposit.json');
+    path.resolve(__dirname, '../../circuits/deposit.json');
   const circuit = JSON.parse(readFileSync(circuitPath, 'utf8'));
   const noir = new Noir(circuit);
   const { witness } = await noir.execute({

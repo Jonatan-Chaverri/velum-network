@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "sync-circuits": "cp ../../wallet_proof/target/deposit.json ../../wallet_proof/target/withdraw.json ../../wallet_proof/target/transfer.json lib/circuits/",
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit"
