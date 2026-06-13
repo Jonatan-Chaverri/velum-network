@@ -8,6 +8,11 @@ import "./polyfills";
 export const metadata: Metadata = {
   title: "Velum Network",
   description: "Confidential payment infrastructure for AI agents and autonomous commerce.",
+  openGraph: {
+    title: "Velum Network",
+    description: "Confidential payment infrastructure for AI agents and autonomous commerce.",
+    images: ["/logo.png"],
+  },
 };
 
 export default function RootLayout({

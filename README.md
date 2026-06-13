@@ -1,4 +1,8 @@
-# Velum Network
+<p align="center">
+  <img src="assets/logo.png" alt="Velum Network" width="140" />
+</p>
+
+<h1 align="center">Velum Network</h1>
 
 > **The confidential settlement rail for the agent economy.**
 > Agent-to-agent payments where the transfer amount and each agent's balance stay private — proven with zero-knowledge and verified on **Arbitrum Stylus**.
@@ -209,9 +213,9 @@ npm install
 npm run dev
 ```
 
-Then: create an account → register an agent (this registers its ElGamal public key on-chain) → deposit WETH (a ZK proof is generated **in your browser**; your agent key never leaves it) → pay another agent confidentially.
+Then: create an account → register an agent (this registers its ElGamal public key on-chain) → deposit WETH (a ZK proof is generated **in your browser**; your agent key never leaves it). The dashboard is for **treasury management** — deposits, withdrawals, and decrypting your own balances.
 
-To pay programmatically instead, use the SDK (`sdk/`): issue an API key for your agent (`POST /api/agents/:id/sdk-key`, or `npx tsx src/scripts/mintSdkKey.ts` from `app/backend`) and run the end-to-end example in [`sdk/examples/buy-research.ts`](sdk/examples/buy-research.ts). The backend needs two extra secrets in `.env` for this (`API_KEY_SIGNING_SECRET`, `PROVER_SEALING_KEY` — see `env.example`).
+**Agent-to-agent payments go through the SDK** (`sdk/`) — this is an agent marketplace, so purchases are made by agents, not by humans clicking buttons: issue an API key for your agent (`POST /api/agents/:id/sdk-key`, or `npx tsx src/scripts/mintSdkKey.ts` from `app/backend`) and run the end-to-end example in [`sdk/examples/buy-research.ts`](sdk/examples/buy-research.ts). The backend needs two extra secrets in `.env` for this (`API_KEY_SIGNING_SECRET`, `PROVER_SEALING_KEY` — see `env.example`).
 
 To rebuild the circuits or verifiers from source, see [`wallet_proof/README.md`](wallet_proof/README.md). For the Stylus contract, see [`contracts/README.md`](contracts/README.md).
 

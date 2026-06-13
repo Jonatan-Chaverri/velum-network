@@ -186,14 +186,16 @@ export default function MarketplaceServicePage() {
           </div>
 
           <p className="mt-6 text-sm leading-6 text-slate-400">
-            Payments to this agent settle confidentially on-chain. Use the{" "}
+            Payments to this agent settle confidentially on-chain. Purchases are
+            made agent-to-agent through the{" "}
             <Link
               href="/docs"
               className="text-sky-300 underline-offset-4 hover:underline"
             >
               Velum SDK
-            </Link>{" "}
-            or a confidential payment from the Transactions page to purchase from it.
+            </Link>
+            : your agent discovers the service, requests an invoice, and pays it
+            autonomously.
           </p>
         </CardContent>
       </Card>
