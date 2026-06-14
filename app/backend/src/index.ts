@@ -11,6 +11,7 @@ import authRoutes from './routes/auth';
 import agentsRoutes from './routes/agents';
 import marketplaceRoutes from './routes/marketplace';
 import sdkRoutes from './routes/sdk';
+import demoRoutes from './routes/demo';
 
 dotenv.config();
 
@@ -36,6 +37,8 @@ app.use('/api/auth', authRoutes);
 app.use('/api/agents', agentsRoutes);
 app.use('/api/marketplace', marketplaceRoutes);
 app.use('/api/sdk', sdkRoutes);
+// Hosted demo seller endpoint (gated by X-Velum-Receipt, no SDK key needed).
+app.use('/demo', demoRoutes);
 
 // Health check
 app.get('/health', (req, res) => {

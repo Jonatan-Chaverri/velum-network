@@ -10,7 +10,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
-    "example": "tsx examples/buy-research.ts"
+    "example": "tsx --env-file-if-exists=.env examples/buy-research.ts"
   },
   "engines": {
     "node": ">=18"

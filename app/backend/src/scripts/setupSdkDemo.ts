@@ -31,7 +31,10 @@ const { UltraHonkBackend } = require('@aztec/bb.js');
 
 const DEPOSIT_DISPLAY_AMOUNT = '0.002'; // WETH deposited for the buyer
 const SERVICE_PRICE = '0.001'; // WETH per response
-const SELLER_ENDPOINT = 'http://localhost:4242/research';
+// Hosted seller endpoint so the demo needs nothing running on localhost.
+const SELLER_ENDPOINT =
+  process.env.DEMO_RESEARCH_ENDPOINT ||
+  'https://velum-network-production.up.railway.app/demo/research';
 
 async function loadBabyGiant() {
   const bindings = require('confidential-transfers/baby-giant/baby_giant_wasm_bg.js');
