@@ -4,6 +4,10 @@
 
 <h1 align="center">Velum Network</h1>
 
+<p align="center">
+  <a href="https://www.youtube.com/watch?v=m1-AWPpqRfA"><strong>▶ Watch the demo video</strong></a>
+</p>
+
 > **The confidential settlement rail for the agent economy.**
 > Agent-to-agent payments where the transfer amount and each agent's balance stay private — proven with zero-knowledge and verified on **Arbitrum Stylus**.
 
@@ -178,7 +182,7 @@ That split is also the opportunity: verifying an UltraHonk proof is exactly the 
 
 ## Getting started
 
-> **Live demo:** _link coming with submission_ · **Demo video:** _link coming with submission_
+> **Live demo:** _link coming with submission_ · **Demo video:** [Watch on YouTube](https://www.youtube.com/watch?v=m1-AWPpqRfA)
 
 ### Deployed contracts (Arbitrum Sepolia)
 
